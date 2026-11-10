@@ -1,7 +1,10 @@
 import type { Focus, Level } from "./config";
 
+export type BoardKey = "personal" | "influity";
+
 export type Task = {
   id: string;
+  board?: BoardKey; // which Notion board the task lives on (default personal)
   url: string;
   name: string;
   status: string | null;
@@ -29,7 +32,7 @@ export type Task = {
 /** Slim task used by the timeline (includes finished tasks). */
 export type TreeTask = Pick<
   Task,
-  "id" | "name" | "status" | "level" | "parentId" | "departmentIds" | "due" | "createdAt" | "doneAt" | "url"
+  "id" | "board" | "name" | "status" | "level" | "parentId" | "departmentIds" | "due" | "createdAt" | "doneAt" | "url"
 >;
 
 export type DoneItem = { id: string; name: string; doneAs: "Signal" | "Noise" | null; focus: Focus | null; noise: boolean };
@@ -63,6 +66,7 @@ export type Board = {
   departments: Department[];
   titles: Record<string, string>; // parent / sprint titles for ids not in tasks
   currentSprintId: string | null;
+  warnings: string[]; // parts that couldn't load (the rest of the board still works)
   fetchedAt: string;
 };
 

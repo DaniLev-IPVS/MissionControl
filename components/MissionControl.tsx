@@ -250,6 +250,16 @@ export default function MissionControl() {
           </div>
         </header>
 
+        {board?.warnings?.length ? (
+          <div role="status" className="rounded-2xl px-4 py-3 text-sm text-ink-2 glass ring-1 ring-warning/40">
+            {board.warnings.map((w) => (
+              <p key={w}>
+                <span className="font-semibold text-warning">Partly loaded:</span> {w}
+              </p>
+            ))}
+          </div>
+        ) : null}
+
         {/* ---- Views ---- */}
         <nav aria-label="Views" className="flex flex-wrap items-center gap-2">
           <Segmented

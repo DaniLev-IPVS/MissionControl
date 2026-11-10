@@ -6,13 +6,16 @@ import {
   DEFAULT_ASSIGNEE_ID,
   DEPARTMENTS_DATA_SOURCE_ID,
   FOCUS_NOTION,
+  INFLUITY_TASKS_DATA_SOURCE_ID,
+  MY_USER_IDS,
   SPRINTS_DATA_SOURCE_ID,
   TASKS_DATA_SOURCE_ID,
+  TASK_STATE_DATA_SOURCE_ID,
   focusFromNotion,
   levelFromNotion,
   levelToNotion,
 } from "./config";
-import type { Day, DayStats, Department, DoneItem, NewTask, Task, TaskPatch, TreeTask } from "./types";
+import type { BoardKey, Day, DayStats, Department, DoneItem, NewTask, Task, TaskPatch, TreeTask } from "./types";
 
 let client: Client | null = null;
 function notion() {
@@ -59,29 +62,64 @@ async function queryAll(dataSourceId: string, filter?: object, pageSize = 100, m
   return pages;
 }
 
-// True while the Task Level select still has the old "Checkpoint" option.
-export async function levelsUseOldNames(): Promise<boolean> {
-  const ds = await notion().dataSources.retrieve({ data_source_id: TASKS_DATA_SOURCE_ID });
+// ---- Boards -------------------------------------------------------------------
+// The personal board carries Mission Control's fields as columns. The Influity
+// board is shared with the team: only my tasks are read, its own status names are
+// translated, and Mission Control's fields live in the private Task State database.
+
+const BOARD_SOURCE: Record<BoardKey, string> = {
+  personal: TASKS_DATA_SOURCE_ID,
+  influity: INFLUITY_TASKS_DATA_SOURCE_ID,
+};
+
+const INFLUITY_STATUS_IN: Record<string, string> = { Completed: "Done", "In Progress": "Working on it" };
+const INFLUITY_STATUS_OUT: Record<string, string> = {
+  Done: "Completed",
+  "Working on it": "In Progress",
+  "Under Review": "In Progress",
+  Fulfilled: "In Progress",
+};
+const statusIn = (board: BoardKey, s: string | null) => (board === "influity" && s ? (INFLUITY_STATUS_IN[s] ?? s) : s);
+const statusOut = (board: BoardKey, s: string) => (board === "influity" ? (INFLUITY_STATUS_OUT[s] ?? s) : s);
+
+/** Influity tasks where I'm in Assigned or Person. */
+const mine = () => ({
+  or: MY_USER_IDS.flatMap((id) => [
+    { property: "Assigned", people: { contains: id } },
+    { property: "Person", people: { contains: id } },
+  ]),
+});
+
+// True while a board's Task Level select still has the old "Checkpoint" option.
+const levelCache = new Map<string, { at: number; old: boolean }>();
+export async function levelsUseOldNames(dataSourceId = TASKS_DATA_SOURCE_ID): Promise<boolean> {
+  const hit = levelCache.get(dataSourceId);
+  if (hit && Date.now() - hit.at < 600_000) return hit.old;
+  const ds = await notion().dataSources.retrieve({ data_source_id: dataSourceId });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const prop = (ds as any).properties?.["Task Level"];
   const names: string[] = prop?.select?.options?.map((o: { name: string }) => o.name) ?? [];
-  return names.includes("Checkpoint");
+  const old = names.includes("Checkpoint");
+  levelCache.set(dataSourceId, { at: Date.now(), old });
+  return old;
 }
 
-function toTask(p: PageObjectResponse, oldNames: boolean): Task {
+function toTask(p: PageObjectResponse, oldNames: boolean, board: BoardKey = "personal"): Task {
   const pr = p.properties;
   return {
     id: p.id,
+    board,
     url: p.url,
     name: plain(pr["Name"]) || "Untitled",
-    status: status(pr["Status"]),
+    status: statusIn(board, status(pr["Status"])),
     priority: select(pr["Priority"]),
     level: levelFromNotion(select(pr["Task Level"]), oldNames),
     due: date(pr["Due Date"]),
     estMin: num(pr["Est. Time (min)"]),
-    departmentIds: relation(pr["Departments"] ?? pr["My Projects"]),
+    // Influity's own department relation points elsewhere; board.ts files these under "Influity".
+    departmentIds: board === "personal" ? relation(pr["Departments"] ?? pr["My Projects"]) : [],
     parentId: relation(pr["Parent item"])[0] ?? null,
-    sprintId: relation(pr["Sprint"])[0] ?? null,
+    sprintId: board === "personal" ? (relation(pr["Sprint"])[0] ?? null) : null,
     focus: focusFromNotion(select(pr["Focus"])),
     focusOrder: num(pr["Focus Order"]),
     noise: check(pr["Noise"]),
@@ -96,8 +134,64 @@ function toTask(p: PageObjectResponse, oldNames: boolean): Task {
   };
 }
 
-export async function fetchOpenTasks(): Promise<Task[]> {
-  const [pages, oldNames] = await Promise.all([
+// ---- Task State (Mission Control fields for shared-board tasks) -------------------
+type State = Pick<
+  Task,
+  "focus" | "focusOrder" | "noise" | "idleSince" | "idleReminder" | "idleMinutes" | "idleLog" | "doneAt" | "doneAs"
+>;
+const STATE_KEYS = [
+  "focus", "focusOrder", "noise", "idleSince", "idleReminder", "idleMinutes", "idleLog", "doneAt", "doneAs",
+] as const satisfies readonly (keyof State)[];
+
+function toState(p: PageObjectResponse): State {
+  const t = toTask(p, false);
+  return Object.fromEntries(STATE_KEYS.map((k) => [k, t[k]])) as State;
+}
+
+/** State rows that can matter now: in a lane, flagged noise, or touched in the last 3 days. */
+async function fetchStates(): Promise<Map<string, State>> {
+  const since = new Date(Date.now() - 3 * 86400000).toISOString();
+  const pages = await queryAll(TASK_STATE_DATA_SOURCE_ID, {
+    or: [
+      { property: "Focus", select: { is_not_empty: true } },
+      { property: "Noise", checkbox: { equals: true } },
+      { timestamp: "last_edited_time", last_edited_time: { on_or_after: since } },
+    ],
+  });
+  const map = new Map<string, State>();
+  for (const p of pages) {
+    const id = plain(p.properties["Task ID"]).trim();
+    if (id) map.set(normalizeId(id), toState(p));
+  }
+  return map;
+}
+
+const normalizeId = (id: string) => id.replace(/-/g, "").toLowerCase();
+const withState = (t: Task, states: Map<string, State>): Task => ({ ...t, ...(states.get(normalizeId(t.id)) ?? {}) });
+
+/** Reads that may fail on their own (a board not shared yet) without taking the rest down. */
+export type Soft<T> = { value: T; warnings: string[] };
+
+function accessWarning(name: string, err: unknown) {
+  const code = (err as { code?: string }).code;
+  console.error(`${name} fetch failed`, err);
+  return code === "object_not_found" || code === "restricted_resource"
+    ? `${name} isn't shared with your Notion integration (⋯ → Connections in Notion).`
+    : `${name} couldn't load: ${err instanceof Error ? err.message : String(err)}`;
+}
+
+async function sharedTasks(filter: object) {
+  const warnings: string[] = [];
+  const [pages, oldNames, states] = await Promise.all([
+    queryAll(INFLUITY_TASKS_DATA_SOURCE_ID, filter).catch((e) => (warnings.push(accessWarning("Influity Task Board", e)), [])),
+    levelsUseOldNames(INFLUITY_TASKS_DATA_SOURCE_ID).catch(() => true),
+    fetchStates().catch((e) => (warnings.push(accessWarning("Mission Control Task State", e)), new Map<string, State>())),
+  ]);
+  return { tasks: pages.map((p) => withState(toTask(p, oldNames, "influity"), states)), warnings };
+}
+
+export async function fetchOpenTasks(): Promise<Soft<Task[]>> {
+  const [pages, oldNames, shared] = await Promise.all([
     queryAll(TASKS_DATA_SOURCE_ID, {
       and: [
         { property: "Status", status: { does_not_equal: "Done" } },
@@ -105,42 +199,41 @@ export async function fetchOpenTasks(): Promise<Task[]> {
       ],
     }),
     levelsUseOldNames(),
+    sharedTasks({
+      and: [
+        mine(),
+        { property: "Status", status: { does_not_equal: "Completed" } },
+        { property: "Status", status: { does_not_equal: "Cancelled" } },
+      ],
+    }),
   ]);
-  return pages.map((p) => toTask(p, oldNames));
+  return { value: [...pages.map((p) => toTask(p, oldNames)), ...shared.tasks], warnings: shared.warnings };
 }
 
-export async function fetchDoneSince(sinceISO: string) {
-  const pages = await queryAll(
-    TASKS_DATA_SOURCE_ID,
-    {
-      and: [
-        { property: "Status", status: { equals: "Done" } },
-        { timestamp: "last_edited_time", last_edited_time: { on_or_after: sinceISO } },
-      ],
-    },
-    50,
-    50,
-  );
-  return pages.map(
-    (p): DoneItem => ({
-      id: p.id,
-      name: plain(p.properties["Name"]) || "Untitled",
-      doneAs: (select(p.properties["Done As"]) as DoneItem["doneAs"]) ?? null,
-      focus: focusFromNotion(select(p.properties["Focus"])),
-      noise: check(p.properties["Noise"]),
-    }),
-  );
+const toDoneItem = (t: Task): DoneItem => ({ id: t.id, name: t.name, doneAs: t.doneAs, focus: t.focus, noise: t.noise });
+
+export async function fetchDoneSince(sinceISO: string): Promise<DoneItem[]> {
+  const edited = { timestamp: "last_edited_time", last_edited_time: { on_or_after: sinceISO } };
+  const [pages, shared] = await Promise.all([
+    queryAll(TASKS_DATA_SOURCE_ID, { and: [{ property: "Status", status: { equals: "Done" } }, edited] }, 50, 50),
+    sharedTasks({ and: [mine(), { property: "Status", status: { equals: "Completed" } }, edited] }),
+  ]);
+  return [...pages.map((p) => toDoneItem(toTask(p, false))), ...shared.tasks.map(toDoneItem)];
 }
 
 /** Every ticket, finished ones included, for progress and the timeline. */
 export async function fetchAllTasks(): Promise<TreeTask[]> {
-  const [pages, oldNames] = await Promise.all([queryAll(TASKS_DATA_SOURCE_ID), levelsUseOldNames()]);
-  return pages.map((p) => {
-    const t = toTask(p, oldNames);
+  const [pages, oldNames, shared] = await Promise.all([
+    queryAll(TASKS_DATA_SOURCE_ID),
+    levelsUseOldNames(),
+    sharedTasks(mine()),
+  ]);
+  return [...pages.map((p) => toTask(p, oldNames)), ...shared.tasks].map((t) => {
     const finished = t.status === "Done" || t.status === "Cancelled";
     return {
-      id: t.id, name: t.name, status: t.status, level: t.level, parentId: t.parentId, departmentIds: t.departmentIds,
-      due: t.due, createdAt: t.createdAt, url: t.url, doneAt: t.doneAt ?? (finished ? t.editedAt : null),
+      id: t.id, board: t.board, name: t.name, status: t.status, level: t.level, parentId: t.parentId,
+      departmentIds: t.departmentIds, due: t.due, createdAt: t.createdAt, url: t.url,
+      doneAt: t.doneAt ?? (finished ? t.editedAt : null),
     };
   });
 }
@@ -160,7 +253,10 @@ function toDay(p: PageObjectResponse): Day {
     plannedDone: num(pr["Planned Done"]) ?? 0,
     carriedOver: num(pr["Carried Over"]) ?? 0,
     idleMinutes: num(pr["Idle Minutes"]) ?? 0,
-    plannedIds: relation(pr["Planned Tasks"]),
+    plannedIds: [
+      ...relation(pr["Planned Tasks"]),
+      ...plain(pr["Other Planned"]).split(",").map((s) => s.trim()).filter(Boolean),
+    ],
     notes: plain(pr["Notes"]),
   };
 }
@@ -170,10 +266,20 @@ export async function fetchDays(sinceDay: string): Promise<Day[]> {
   return pages.map(toDay).sort((a, b) => b.date.localeCompare(a.date));
 }
 
+export async function fetchDaysSafe(sinceDay: string): Promise<Soft<Day[]>> {
+  try {
+    return { value: await fetchDays(sinceDay), warnings: [] };
+  } catch (err) {
+    return { value: [], warnings: [accessWarning("Mission Control Days (inside the Mission Control page)", err)] };
+  }
+}
+
 const rel = (ids: string[]) => ({ relation: ids.slice(0, 100).map((id) => ({ id })) });
 
 export async function createDay(day: string, signedIn: string, plannedIds: string[]): Promise<string> {
   const label = new Date(`${day}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  // "Planned Tasks" relates to the personal board only; shared-board ids are kept in the count.
+  const { personal, other } = await byBoard(plannedIds);
   const page = await notion().pages.create({
     parent: { type: "data_source_id", data_source_id: DAYS_DATA_SOURCE_ID },
     properties: {
@@ -181,7 +287,8 @@ export async function createDay(day: string, signedIn: string, plannedIds: strin
       Date: { date: { start: day } },
       "Signed In": { date: { start: signedIn } },
       Planned: { number: plannedIds.length },
-      "Planned Tasks": rel(plannedIds),
+      "Planned Tasks": rel(personal),
+      "Other Planned": { rich_text: richText(other.join(",")) },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any,
   });
@@ -197,7 +304,9 @@ export async function updateDay(
   if (patch.signedOut !== undefined) p["Signed Out"] = { date: patch.signedOut ? { start: patch.signedOut } : null };
   if (patch.notes !== undefined) p["Notes"] = { rich_text: richText(patch.notes) };
   if (patch.plannedIds !== undefined) {
-    p["Planned Tasks"] = rel(patch.plannedIds);
+    const { personal, other } = await byBoard(patch.plannedIds);
+    p["Planned Tasks"] = rel(personal);
+    p["Other Planned"] = { rich_text: richText(other.join(",")) };
     p["Planned"] = { number: patch.plannedIds.length };
   }
   const nums: [keyof DayStats, string][] = [
@@ -205,9 +314,16 @@ export async function updateDay(
     ["carriedOver", "Carried Over"], ["idleMinutes", "Idle Minutes"],
   ];
   for (const [k, name] of nums) if (patch[k] !== undefined) p[name] = { number: patch[k] };
-  if (patch.doneIds !== undefined) p["Done Tasks"] = rel(patch.doneIds);
+  if (patch.doneIds !== undefined) p["Done Tasks"] = rel((await byBoard(patch.doneIds)).personal);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await notion().pages.update({ page_id: id, properties: p as any });
+}
+
+async function byBoard(ids: string[]) {
+  const personal: string[] = [];
+  const other: string[] = [];
+  for (const id of ids) ((await whichBoard(id)) === "personal" ? personal : other).push(id);
+  return { personal, other };
 }
 
 export async function fetchDepartments(): Promise<Department[]> {
@@ -232,12 +348,13 @@ export async function fetchTitle(pageId: string): Promise<string> {
   }
 }
 
+// ---- Writes -----------------------------------------------------------------------
 const richText = (s: string) => [{ type: "text", text: { content: s.slice(0, 2000) } }];
 
-function patchToProperties(patch: TaskPatch) {
+function patchToProperties(patch: TaskPatch, board: BoardKey = "personal") {
   const p: Record<string, unknown> = {};
   if (patch.name !== undefined) p["Name"] = { title: richText(patch.name) };
-  if (patch.status !== undefined && patch.status !== null) p["Status"] = { status: { name: patch.status } };
+  if (patch.status !== undefined && patch.status !== null) p["Status"] = { status: { name: statusOut(board, patch.status) } };
   if (patch.priority !== undefined) p["Priority"] = { select: patch.priority ? { name: patch.priority } : null };
   if (patch.due !== undefined) p["Due Date"] = { date: patch.due ? { start: patch.due } : null };
   if (patch.focus !== undefined) p["Focus"] = { select: patch.focus ? { name: FOCUS_NOTION[patch.focus] } : null };
@@ -253,37 +370,98 @@ function patchToProperties(patch: TaskPatch) {
   return p;
 }
 
-export async function updateTaskInNotion(id: string, patch: TaskPatch) {
-  await notion().pages.update({
-    page_id: id,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    properties: patchToProperties(patch) as any,
-  });
+function splitPatch(patch: TaskPatch) {
+  const native: TaskPatch = {};
+  const state: TaskPatch = {};
+  for (const [k, v] of Object.entries(patch)) {
+    if ((STATE_KEYS as readonly string[]).includes(k)) Object.assign(state, { [k]: v });
+    else Object.assign(native, { [k]: v });
+  }
+  return { native, state };
 }
 
+// Which board a page lives on (pages never move between boards, so this is cached).
+const boardCache = new Map<string, { board: BoardKey; name: string }>();
+async function pageInfo(id: string) {
+  const key = normalizeId(id);
+  const hit = boardCache.get(key);
+  if (hit) return hit;
+  const page = await notion().pages.retrieve({ page_id: id });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const parent = (page as any).parent ?? {};
+  const ds = normalizeId(parent.data_source_id ?? parent.database_id ?? "");
+  const board: BoardKey = ds === normalizeId(INFLUITY_TASKS_DATA_SOURCE_ID) ? "influity" : "personal";
+  const info = { board, name: isFullPage(page) ? titleOf(page) : "Untitled" };
+  boardCache.set(key, info);
+  return info;
+}
+const whichBoard = async (id: string) => (await pageInfo(id)).board;
+
+async function upsertState(taskId: string, patch: TaskPatch, name?: string) {
+  if (!Object.keys(patch).length) return;
+  const existing = await notion().dataSources.query({
+    data_source_id: TASK_STATE_DATA_SOURCE_ID,
+    filter: { property: "Task ID", rich_text: { equals: taskId } },
+    page_size: 1,
+  });
+  const properties = patchToProperties(patch);
+  const row = existing.results[0];
+  if (row) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await notion().pages.update({ page_id: row.id, properties: properties as any });
+  } else {
+    await notion().pages.create({
+      parent: { type: "data_source_id", data_source_id: TASK_STATE_DATA_SOURCE_ID },
+      properties: {
+        ...properties,
+        Name: { title: richText(name ?? (await pageInfo(taskId)).name) },
+        "Task ID": { rich_text: richText(taskId) },
+        Board: { select: { name: "Influity" } },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any,
+    });
+  }
+}
+
+export async function updateTaskInNotion(id: string, patch: TaskPatch) {
+  const board = await whichBoard(id);
+  if (board === "personal") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await notion().pages.update({ page_id: id, properties: patchToProperties(patch) as any });
+    return;
+  }
+  const { native, state } = splitPatch(patch);
+  if (Object.keys(native).length) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await notion().pages.update({ page_id: id, properties: patchToProperties(native, board) as any });
+    if (native.name) boardCache.set(normalizeId(id), { board, name: native.name });
+  }
+  await upsertState(id, state, native.name);
+}
+
+/** New tasks go to the parent's board (a split on an Influity task stays on Influity). */
 export async function createTaskInNotion(t: NewTask, sprintId: string | null): Promise<string> {
-  const oldNames = await levelsUseOldNames();
+  const board: BoardKey = t.parentId ? await whichBoard(t.parentId) : "personal";
+  const oldNames = await levelsUseOldNames(BOARD_SOURCE[board]);
+  const base: TaskPatch = { name: t.name, status: "To Start", priority: t.priority ?? null, due: t.due ?? null };
+  const lane: TaskPatch = { focus: t.focus ?? null, focusOrder: t.focusOrder ?? null, noise: t.noise ?? false };
   const properties: Record<string, unknown> = {
-    ...patchToProperties({
-      name: t.name,
-      status: "To Start",
-      priority: t.priority ?? null,
-      due: t.due ?? null,
-      focus: t.focus ?? null,
-      focusOrder: t.focusOrder ?? null,
-      noise: t.noise ?? false,
-    }),
+    ...patchToProperties(board === "personal" ? { ...base, ...lane } : base, board),
     "Task Level": { select: { name: levelToNotion(t.level, oldNames) } },
     Assigned: { people: [{ id: DEFAULT_ASSIGNEE_ID }] },
   };
   if (t.parentId) properties["Parent item"] = { relation: [{ id: t.parentId }] };
-  if (t.departmentIds?.length) properties["Departments"] = { relation: t.departmentIds.map((id) => ({ id })) };
-  if (sprintId) properties["Sprint"] = { relation: [{ id: sprintId }] };
+  if (board === "personal") {
+    if (t.departmentIds?.length) properties["Departments"] = { relation: t.departmentIds.map((id) => ({ id })) };
+    if (sprintId) properties["Sprint"] = { relation: [{ id: sprintId }] };
+  }
   const page = await notion().pages.create({
-    parent: { type: "data_source_id", data_source_id: TASKS_DATA_SOURCE_ID },
+    parent: { type: "data_source_id", data_source_id: BOARD_SOURCE[board] },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     properties: properties as any,
   });
+  boardCache.set(normalizeId(page.id), { board, name: t.name });
+  if (board !== "personal" && (lane.focus || lane.noise)) await upsertState(page.id, lane, t.name);
   return page.id;
 }
 
@@ -293,7 +471,9 @@ const SOURCES = [
   ["Personal Ticket Board", TASKS_DATA_SOURCE_ID],
   ["Departments", DEPARTMENTS_DATA_SOURCE_ID],
   ["Sprints", SPRINTS_DATA_SOURCE_ID],
+  ["Influity Task Board", INFLUITY_TASKS_DATA_SOURCE_ID],
   ["Mission Control Days (inside the Mission Control page)", DAYS_DATA_SOURCE_ID],
+  ["Mission Control Task State (inside the Mission Control page)", TASK_STATE_DATA_SOURCE_ID],
 ] as const;
 
 let lastDiagnosis: { at: number; message: string } | null = null;

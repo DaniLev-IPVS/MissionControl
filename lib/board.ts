@@ -5,23 +5,32 @@ import { mockStore, mockTree } from "./mock";
 import {
   fetchAllTasks,
   fetchCurrentSprintId,
-  fetchDays,
+  fetchDaysSafe,
   fetchDepartments,
   fetchDoneSince,
   fetchOpenTasks,
   fetchTitle,
 } from "./notion";
+import type { Soft } from "./notion";
 import type { Board, Day, Department, Task, TreeTask } from "./types";
+
+// Shared-board tasks have no department of their own here: file them under the
+// department with the board's name (e.g. "Influity") so filters and the tree work.
+function fileShared<T extends Pick<Task, "board" | "departmentIds">>(tasks: T[], departments: Department[]): T[] {
+  const influity = departments.find((d) => d.name.trim().toLowerCase() === "influity")?.id;
+  if (!influity) return tasks;
+  return tasks.map((t) => (t.board === "influity" && !t.departmentIds.length ? { ...t, departmentIds: [influity] } : t));
+}
 
 // Shared (remote) cache in front of Notion: every viewer's 2s poll reads this,
 // so Notion sees a couple of queries per ~5s no matter how many tabs are open.
 // The webhook and every write from the site expire it immediately.
 
-async function getOpenTasks(): Promise<Task[]> {
+async function getOpenTasks(): Promise<Soft<Task[]>> {
   "use cache: remote";
   cacheTag(BOARD_TAG, "tasks");
   cacheLife({ revalidate: 5, expire: 300 });
-  if (USE_MOCK) return structuredClone(mockStore().tasks);
+  if (USE_MOCK) return { value: structuredClone(mockStore().tasks), warnings: [] };
   return fetchOpenTasks();
 }
 
@@ -49,12 +58,19 @@ async function getCurrentSprintId(): Promise<string | null> {
   return fetchCurrentSprintId();
 }
 
-async function getDays(sinceDay: string): Promise<Day[]> {
+async function getDaysSoft(sinceDay: string): Promise<Soft<Day[]>> {
   "use cache: remote";
   cacheTag(BOARD_TAG, "days");
   cacheLife({ revalidate: 30, expire: 600 });
-  if (USE_MOCK) return structuredClone(mockStore().days.filter((d) => d.date >= sinceDay));
-  return fetchDays(sinceDay);
+  if (USE_MOCK) return { value: structuredClone(mockStore().days.filter((d) => d.date >= sinceDay)), warnings: [] };
+  return fetchDaysSafe(sinceDay);
+}
+
+/** Throws when the day log can't be read (sign in / out need it). */
+async function getDays(sinceDay: string): Promise<Day[]> {
+  const { value, warnings } = await getDaysSoft(sinceDay);
+  if (warnings.length) throw new Error(warnings[0]);
+  return value;
 }
 
 async function getTree(): Promise<TreeTask[]> {
@@ -89,14 +105,16 @@ function startOfToday(timeZone = TIME_ZONE) {
 
 export async function getBoard(): Promise<Board> {
   const today = todayInZone();
-  const [tasks, doneToday, departments, currentSprintId, days] = await Promise.all([
+  const [open, doneToday, departments, currentSprintId, days] = await Promise.all([
     getOpenTasks(),
     getDoneSince(startOfToday()),
     getDepartments(),
     getCurrentSprintId(),
-    getDays(today),
+    getDaysSoft(today),
   ]);
-  const day = days.find((d) => d.date === today) ?? null;
+  const tasks = fileShared(open.value, departments);
+  const warnings = [...open.warnings, ...days.warnings];
+  const day = days.value.find((d) => d.date === today) ?? null;
 
   const known = new Set(tasks.map((t) => t.id));
   const needed = new Set<string>();
@@ -107,7 +125,7 @@ export async function getBoard(): Promise<Board> {
   const titles: Record<string, string> = {};
   await Promise.all([...needed].map(async (id) => (titles[id] = await getTitle(id))));
 
-  return { tasks, doneToday, day, departments, titles, currentSprintId, fetchedAt: new Date().toISOString() };
+  return { tasks, doneToday, day, departments, titles, currentSprintId, warnings, fetchedAt: new Date().toISOString() };
 }
 
 export async function getHistory(days = 60) {
@@ -115,4 +133,9 @@ export async function getHistory(days = 60) {
   return getDays(since);
 }
 
-export { getCurrentSprintId, getTree };
+async function getFiledTree(): Promise<TreeTask[]> {
+  const [tree, departments] = await Promise.all([getTree(), getDepartments()]);
+  return fileShared(tree, departments);
+}
+
+export { getCurrentSprintId, getFiledTree as getTree };

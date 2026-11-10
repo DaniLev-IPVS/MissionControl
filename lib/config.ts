@@ -8,9 +8,20 @@ export const DAYS_DATA_SOURCE_ID =
   process.env.NOTION_DAYS_DATA_SOURCE_ID ?? "774940d5-dec4-4416-94f1-32e8a05108f8";
 export const DEPARTMENTS_DATA_SOURCE_ID =
   process.env.NOTION_DEPARTMENTS_DATA_SOURCE_ID ?? "2c463a9c-0965-816b-85c1-000baa6065d1";
+// Influity Task Board (shared with the team): only tasks for MY_USER_IDS show up.
+export const INFLUITY_TASKS_DATA_SOURCE_ID =
+  process.env.NOTION_INFLUITY_DATA_SOURCE_ID ?? "0d95c9cd-9cf0-4419-b9a5-8a3e3a7f3075";
+// Lanes / Signal-Noise / idle state for shared-board tasks, kept in the private
+// Mission Control page so the shared board needs no extra columns.
+export const TASK_STATE_DATA_SOURCE_ID =
+  process.env.NOTION_TASK_STATE_DATA_SOURCE_ID ?? "c02dca98-5938-4ffe-bc62-95470c727744";
 // New tasks are assigned to this Notion user so they show in "assigned to me" views.
 export const DEFAULT_ASSIGNEE_ID =
   process.env.NOTION_DEFAULT_ASSIGNEE_ID ?? "e89eed68-ee97-4241-ab9b-7588b0e4bad8";
+
+// Notion users that count as "me" on shared boards (Dani Lev; not Dan).
+export const MY_USER_IDS = (process.env.NOTION_MY_USER_IDS ?? DEFAULT_ASSIGNEE_ID)
+  .split(",").map((s) => s.trim()).filter(Boolean);
 
 export const BOARD_TAG = "board";
 
