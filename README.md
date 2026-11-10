@@ -50,7 +50,7 @@ The AI planner (`app/api/plan`) calls Claude through **Vercel AI Gateway** (`PLA
 - `app/actions.ts`: `updateTask` server action (validates input, writes to Notion, expires the cache) and `login`.
 - `app/api/board/route.ts`: board JSON with ETag/304 support.
 - `app/api/notion/webhook/route.ts`: Notion webhook (handshake, signature check, cache expiry).
-- `proxy.ts`: password gate that protects every page and API route except `/login` and the webhook.
+- `proxy.ts` + `lib/auth.ts`: email/password login (from `ADMIN_EMAIL` / `ADMIN_PASSWORD`) protecting every page and API route except `/login` and the webhook.
 - `lib/mock.ts` and `app/api/dev/simulate`: fake board for local development with no Notion token.
 
 ## Local development
@@ -81,9 +81,12 @@ To use real data, copy `.env.example` to `.env.local` and fill it in.
    vercel env add NOTION_TOKEN
    ```
    ```bash
-   vercel env add SITE_PASSWORD
+   vercel env add ADMIN_EMAIL
    ```
-   Then redeploy. In production, the site refuses all access until `SITE_PASSWORD` is set.
+   ```bash
+   vercel env add ADMIN_PASSWORD
+   ```
+   Then redeploy. These are the site login. In production the site refuses all access until both are set. Changing the password logs every browser out.
    For the AI planner, make sure AI Gateway is enabled for the Vercel team (Vercel dashboard → AI Gateway).
 4. **Turn on instant updates (the webhook).**
    1. In the integration settings, open the Webhooks tab and create a subscription. The URL is `https://<your-domain>/api/notion/webhook`, with page and data source events selected.

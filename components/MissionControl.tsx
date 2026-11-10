@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import {
   AlarmClock,
   Layers,
+  LogOut,
   ListTodo,
   Mic,
   Plus,
@@ -20,6 +21,7 @@ import { localDay, lowestLevel, makeMain, moveTo, sections, snooze, type Lane } 
 import { useNow, useReminders } from "@/lib/hooks";
 import type { Task } from "@/lib/types";
 import { useBoard } from "@/lib/useBoard";
+import { logout } from "@/app/actions";
 import { DaysView } from "./DaysView";
 import { DetailsDrawer } from "./DetailsDrawer";
 import { PlanView } from "./PlanView";
@@ -236,6 +238,15 @@ export default function MissionControl() {
             >
               <Plus className="size-4" /> Add task
             </button>
+            <form action={logout}>
+              <button
+                aria-label="Log out of Mission Control"
+                title="Log out"
+                className="grid size-11 place-items-center rounded-full text-ink-3 glass-chip hover:text-ink"
+              >
+                <LogOut className="size-4" />
+              </button>
+            </form>
           </div>
         </header>
 

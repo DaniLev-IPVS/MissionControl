@@ -3,7 +3,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { updateTag } from "next/cache";
-import { AUTH_COOKIE, authToken } from "@/lib/auth";
+import { AUTH_COOKIE, adminCredentials, safeEqual, sessionToken } from "@/lib/auth";
 import { getCurrentSprintId, getHistory, todayInZone } from "@/lib/board";
 import { ALL_STATUSES, BOARD_TAG, FOCUS, LEVELS, PRIORITIES, USE_MOCK } from "@/lib/config";
 import { mockCreate, mockCreateDay, mockUpdate, mockUpdateDay } from "@/lib/mock";
@@ -156,10 +156,16 @@ export async function signOut(dayId: string, stats: DayStats, notes: string, ret
 }
 
 export async function login(_: unknown, form: FormData) {
-  const password = process.env.SITE_PASSWORD;
-  if (!password) return { error: "SITE_PASSWORD is not set on the server." };
-  if (form.get("password") !== password) return { error: "Wrong password." };
-  (await cookies()).set(AUTH_COOKIE, await authToken(password), {
+  const creds = adminCredentials();
+  if (!creds) return { error: "Login isn't set up yet: add ADMIN_EMAIL and ADMIN_PASSWORD in Vercel." };
+  const email = String(form.get("email") ?? "").trim().toLowerCase();
+  const password = String(form.get("password") ?? "");
+  const ok = (await safeEqual(email, creds.email)) && (await safeEqual(password, creds.password));
+  if (!ok) {
+    await new Promise((r) => setTimeout(r, 900)); // slow down guessing
+    return { error: "That email and password don't match.", email };
+  }
+  (await cookies()).set(AUTH_COOKIE, await sessionToken(creds.email, creds.password), {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
@@ -167,4 +173,9 @@ export async function login(_: unknown, form: FormData) {
     maxAge: 60 * 60 * 24 * 30,
   });
   redirect("/");
+}
+
+export async function logout() {
+  (await cookies()).delete(AUTH_COOKIE);
+  redirect("/login");
 }
