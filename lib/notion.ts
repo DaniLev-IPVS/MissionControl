@@ -193,7 +193,7 @@ async function sharedTasks(filter: object) {
 // Temporary: log (once per server instance) which pages the integration can reach,
 // to find a home for the Mission Control databases that needs no extra share.
 let probed = false;
-async function probeAccess() {
+export async function probeAccess() {
   if (probed) return;
   probed = true;
   try {
@@ -220,7 +220,6 @@ async function probeAccess() {
 }
 
 export async function fetchOpenTasks(): Promise<Soft<Task[]>> {
-  void probeAccess();
   const [pages, oldNames, shared] = await Promise.all([
     queryAll(TASKS_DATA_SOURCE_ID, {
       and: [
