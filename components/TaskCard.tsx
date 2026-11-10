@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Ban, Check, ChevronDown, CornerDownRight, GripVertical, Info, Play, Undo2 } from "lucide-react";
 import { LEVEL_LABELS } from "@/lib/config";
-import { done, isBlocked, laneOf, makeMain, markBlocked, moveTo, unblock, type Lane } from "@/lib/flow";
+import { isBlocked, laneOf, makeMain, markBlocked, moveTo, unblock, type Lane } from "@/lib/flow";
 import type { Task } from "@/lib/types";
-import { BoardBadge, DeptChip, DueBadge, IdleTimer, LevelBadge, PriorityPill, cx, useMC } from "./ui";
+import { BoardBadge, DeptChip, DueBadge, IdleTimer, LevelBadge, PriorityPill, cx, markDone, useMC } from "./ui";
 
 export const LANE_LABELS: Record<Lane, string> = {
   main: "Main",
@@ -107,7 +107,7 @@ export function TaskCard({
             </CardButton>
           </>
         )}
-        <CardButton onClick={() => apply(done(tasks, task, today))} label={`Mark "${task.name}" done`} tone="success">
+        <CardButton onClick={() => markDone({ tasks, today, apply }, task)} label={`Mark "${task.name}" done`} tone="success">
           <Check className="size-3.5" /> Done
         </CardButton>
         <MoveMenu task={task} current={lane} />

@@ -21,7 +21,7 @@ import { DASHBOARD_SLOTS, LEVEL_LABELS, TODAY_TARGET, isDoneStatus } from "@/lib
 import { commitPlan, currentOrder, draftTask, isBlocked, slotFor } from "@/lib/flow";
 import { useDictation } from "@/lib/hooks";
 import type { NewTask, Task, TreeTask } from "@/lib/types";
-import { BoardBadge, DueBadge, PriorityPill, cx, deptHue, useMC } from "./ui";
+import { BoardBadge, DeptChip, DueBadge, LevelBadge, PriorityPill, cx, deptHue, useMC } from "./ui";
 
 const MAX_PLAN = 1 + DASHBOARD_SLOTS + TODAY_TARGET.max;
 const PRIORITY_RANK: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
@@ -147,6 +147,19 @@ export function PlanView({
 
   return (
     <div className="grid gap-5 xl:grid-cols-12">
+      <Recommendations
+        byId={byId}
+        inPlan={inPlan}
+        toggle={toggle}
+        addAll={(ids) =>
+          setDraft((d) => {
+            setUndo(d);
+            return [...d, ...ids.filter((id) => !d.includes(id))].slice(0, MAX_PLAN);
+          })
+        }
+        full={draft.length >= MAX_PLAN}
+      />
+
       {/* ---- Tree ---- */}
       <section className="rounded-[26px] p-4 glass sm:p-5 xl:col-span-7" aria-label="All tasks">
         <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -459,6 +472,168 @@ function IconBtn({ children, label, onClick, disabled }: { children: React.React
     >
       {children}
     </button>
+  );
+}
+
+// ---- "Recommend me today's tasks" -------------------------------------------------------------
+type Rec = { id: string; why: string };
+
+function Recommendations({
+  byId,
+  inPlan,
+  toggle,
+  addAll,
+  full,
+}: {
+  byId: Map<string, Task>;
+  inPlan: Map<string, number>;
+  toggle: (id: string) => void;
+  addAll: (ids: string[]) => void;
+  full: boolean;
+}) {
+  const { deptName, titleOf } = useMC();
+  const [picks, setPicks] = useState<Rec[] | null>(null);
+  const [reply, setReply] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recommend: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setReply(data.reply ?? "");
+      setPicks(data.picks ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't get recommendations.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Group by the top of each pick's chain: Project › Mission › Task.
+  const groups = useMemo(() => {
+    const live = (picks ?? []).filter((p) => byId.has(p.id));
+    const chainOf = (t: Task) => {
+      const up: Task[] = [];
+      let cur = t.parentId ? byId.get(t.parentId) : undefined;
+      for (let i = 0; cur && i < 4; i++) {
+        up.unshift(cur);
+        cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+      }
+      return up;
+    };
+    const map = new Map<string, { root: Task | null; rootTitle: string; items: { task: Task; why: string; path: Task[] }[] }>();
+    for (const p of live) {
+      const task = byId.get(p.id)!;
+      const chain = chainOf(task);
+      const root = chain[0] ?? (task.level === "project" ? task : null);
+      const key = root?.id ?? (task.parentId ? `p:${task.parentId}` : `t:${task.id}`);
+      const g = map.get(key) ?? {
+        root,
+        rootTitle: root?.name ?? (task.parentId ? titleOf(task.parentId) : ""),
+        items: [],
+      };
+      g.items.push({ task, why: p.why, path: chain.slice(root ? 1 : 0) });
+      map.set(key, g);
+    }
+    return [...map.values()];
+  }, [picks, byId, titleOf]);
+
+  const ids = (picks ?? []).map((p) => p.id).filter((id) => byId.has(id));
+  const notAdded = ids.filter((id) => !inPlan.has(id));
+
+  return (
+    <section aria-label="Recommended for today" className="rounded-[26px] p-4 glass sm:p-5 xl:col-span-12">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="mr-auto">
+          <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.12em] text-level-project">
+            <Sparkles className="size-4" /> Recommended for today
+          </h2>
+          <p className="mt-1 text-xs text-ink-3">
+            {picks ? reply : "Projects, missions and tasks worth putting in today, with why. Add the ones you agree with."}
+          </p>
+        </div>
+        {picks && notAdded.length > 0 && (
+          <button
+            onClick={() => addAll(notAdded)}
+            disabled={full}
+            className="inline-flex h-10 items-center gap-1.5 rounded-full px-4 text-sm font-semibold text-ink-2 glass-chip hover:text-ink disabled:opacity-40"
+          >
+            Add all {notAdded.length} to today
+          </button>
+        )}
+        <button
+          onClick={run}
+          disabled={busy}
+          className="inline-flex h-10 items-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-white shadow-[0_8px_30px_-8px_rgb(24_86_255/0.9)] hover:bg-primary-hi disabled:opacity-60"
+        >
+          <Sparkles className={cx("size-4", busy && "animate-pulse")} />
+          {busy ? "Thinking…" : picks ? "Recommend again" : "Recommend me today's tasks"}
+        </button>
+      </div>
+
+      {error && <p className="mt-3 text-sm text-danger-hi">{error}</p>}
+      {picks && !groups.length && !error && <p className="mt-3 text-sm text-ink-3">Nothing to recommend: no open, unblocked work.</p>}
+
+      {groups.length > 0 && (
+        <div className="mt-4 grid items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {groups.map((g, gi) => (
+            <div key={g.root?.id ?? gi} className="rounded-2xl p-3.5 glass-chip">
+              {(g.root || g.rootTitle) && (
+                <div className="mb-2 flex min-w-0 items-center gap-1.5">
+                  {g.root && <LevelBadge level={g.root.level} />}
+                  <span className="truncate text-sm font-semibold text-ink">{g.rootTitle}</span>
+                  {g.root?.departmentIds[0] && <DeptChip id={g.root.departmentIds[0]} name={deptName(g.root.departmentIds[0])} />}
+                </div>
+              )}
+              <ul className="space-y-1.5">
+                {g.items.map(({ task, why, path }) => {
+                  const added = inPlan.has(task.id);
+                  return (
+                    <li key={task.id} className={cx("rounded-xl px-2.5 py-2", added ? "bg-primary/15 ring-1 ring-primary/30" : "bg-white/[0.03]")}>
+                      <div className="flex items-start gap-2">
+                        <div className="min-w-0 flex-1">
+                          {path.length > 0 && (
+                            <p className="truncate text-[11px] text-ink-3">{path.map((p) => p.name).join(" › ")}</p>
+                          )}
+                          <p className="text-[13.5px] font-medium leading-snug text-ink">
+                            {g.root?.id === task.id ? "The whole project" : task.name}
+                          </p>
+                          <p className="mt-0.5 text-xs text-ink-3">{why}</p>
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                            {g.root?.id !== task.id && <LevelBadge level={task.level} />}
+                            <BoardBadge board={task.board} />
+                            <PriorityPill p={task.priority} />
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => toggle(task.id)}
+                          disabled={!added && full}
+                          aria-pressed={added}
+                          className={cx(
+                            "h-8 shrink-0 rounded-full px-3 text-xs font-semibold disabled:opacity-40",
+                            added ? "bg-primary text-white" : "text-ink-2 glass-chip hover:text-ink",
+                          )}
+                        >
+                          {added ? "Added" : "Add"}
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

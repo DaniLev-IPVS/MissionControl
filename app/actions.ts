@@ -85,14 +85,31 @@ function cleanNew(t: NewTask): NewTask {
 }
 
 // Applies a batch of edits and new tasks, in order. Returns real ids for new tasks.
-export async function applyChanges(changes: Change[], creates: NewTask[] = []) {
-  const res = await writeChanges(changes, creates);
-  updateTag(BOARD_TAG);
-  return res;
+// Errors come back as values: production hides thrown messages from the browser.
+export async function applyChanges(changes: Change[], creates: NewTask[] = []): Promise<SaveResult> {
+  try {
+    const res = await writeChanges(changes, creates);
+    return res.errors.length
+      ? { ok: false, error: res.errors[0], created: res.created, warnings: res.warnings }
+      : { ok: true, created: res.created, warnings: res.warnings };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err), created: [], warnings: [] };
+  } finally {
+    updateTag(BOARD_TAG); // refresh the board whatever happened
+  }
 }
 
+export type SaveResult = {
+  ok: boolean;
+  error?: string;
+  created: { tempId: string; id: string }[];
+  warnings: string[];
+};
+
+const MAX_CHANGES = 150; // marking a project done touches everything under it
+
 async function writeChanges(changes: Change[], creates: NewTask[]) {
-  if (changes.length + creates.length > 40) throw new Error("Too many changes at once");
+  if (changes.length + creates.length > MAX_CHANGES) throw new Error("Too many changes at once");
   const cleanChanges = changes.map((c) => {
     if (!ID.test(c.id)) throw new Error("Bad id");
     return { id: c.id, patch: cleanPatch(c.patch) };
@@ -105,13 +122,32 @@ async function writeChanges(changes: Change[], creates: NewTask[]) {
     const id = USE_MOCK ? mockCreate(t) : await createTaskInNotion(t, sprintId);
     created.push({ tempId: t.tempId, id });
   }
-  // Sequential to stay under Notion's ~3 requests/second.
+  // Sequential to stay under Notion's ~3 requests/second. One failure doesn't stop the rest.
+  const errors: string[] = [];
+  const warnings = new Set<string>();
   for (const c of cleanChanges) {
     if (!Object.keys(c.patch).length) continue;
-    if (USE_MOCK) mockUpdate(c.id, c.patch);
-    else await updateTaskInNotion(c.id, c.patch);
+    try {
+      if (USE_MOCK) mockUpdate(c.id, c.patch);
+      else {
+        const warning = await updateTaskInNotion(c.id, c.patch);
+        if (warning) warnings.add(warning);
+      }
+    } catch (err) {
+      console.error("save failed", c.id, err);
+      errors.push(saveErrorMessage(err));
+    }
   }
-  return { ok: true, created };
+  return { created, errors, warnings: [...warnings] };
+}
+
+function saveErrorMessage(err: unknown) {
+  const code = (err as { code?: string }).code;
+  if (code === "object_not_found" || code === "restricted_resource")
+    return "Notion wouldn't let the site edit that task. Check the board is shared with your integration.";
+  if (code === "rate_limited") return "Notion is busy (rate limit). Try again in a few seconds.";
+  if (code === "validation_error") return `Notion rejected the change: ${err instanceof Error ? err.message : ""}`;
+  return `Couldn't save to Notion: ${err instanceof Error ? err.message : String(err)}`;
 }
 
 // ---- Sign in / sign out (the workday, not the website login) -----------------------------
@@ -119,7 +155,8 @@ async function writeChanges(changes: Change[], creates: NewTask[]) {
 /** Start the day: apply the plan, then open (or reopen) today's row in Mission Control Days. */
 export async function signIn(changes: Change[], creates: NewTask[], order: string[]) {
   if (order.length > 60 || order.some((id) => !ID.test(id))) throw new Error("Bad plan");
-  const { created } = await writeChanges(changes, creates);
+  const { created, errors } = await writeChanges(changes, creates);
+  if (errors.length) throw new Error(errors[0]);
   const realId = new Map(created.map((c) => [c.tempId, c.id]));
   const plannedIds = order.map((id) => realId.get(id) ?? id).filter((id) => !id.startsWith("tmp-"));
 
@@ -146,7 +183,8 @@ export async function signOut(dayId: string, stats: DayStats, notes: string, ret
   if (typeof notes !== "string" || notes.length > 2000) throw new Error("Bad notes");
 
   if (returnIds.length) {
-    await writeChanges(returnIds.map((id) => ({ id, patch: { focus: null, focusOrder: null } })), []);
+    const { errors } = await writeChanges(returnIds.map((id) => ({ id, patch: { focus: null, focusOrder: null } })), []);
+    if (errors.length) throw new Error(errors[0]);
   }
   const patch = { ...stats, notes, signedOut: new Date().toISOString() };
   if (USE_MOCK) mockUpdateDay(dayId, patch);

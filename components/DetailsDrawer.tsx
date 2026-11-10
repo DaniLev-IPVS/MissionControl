@@ -3,10 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { ExternalLink, X } from "lucide-react";
 import { LEVEL_LABELS, PRIORITIES, STATUS_GROUPS } from "@/lib/config";
-import { done, laneOf } from "@/lib/flow";
+import { laneOf } from "@/lib/flow";
 import type { Task, TaskPatch } from "@/lib/types";
 import { LANE_LABELS } from "./TaskCard";
-import { DeptChip, IdleTimer, LevelBadge, cx, useLatest, useMC } from "./ui";
+import { DeptChip, IdleTimer, LevelBadge, cx, markDone, useLatest, useMC } from "./ui";
 
 export function DetailsDrawer({ task, onClose }: { task: Task; onClose: () => void }) {
   const { apply, tasks, taskById, titleOf, deptName, today } = useMC();
@@ -88,7 +88,7 @@ export function DetailsDrawer({ task, onClose }: { task: Task; onClose: () => vo
             <StatusPicker
               task={task}
               // Done goes through the same action as the Done buttons, so it counts as Signal or Noise.
-              onPick={(v) => v !== task.status && (v === "Done" ? apply(done(tasks, task, today)) : save({ status: v }))}
+              onPick={(v) => v !== task.status && (v === "Done" ? markDone({ tasks, today, apply }, task) : save({ status: v }))}
             />
           </dd>
           <dt className="text-ink-3">Priority</dt>

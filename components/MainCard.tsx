@@ -2,12 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Check, CirclePause, Crosshair, Info, OctagonAlert, Scissors, Sparkles } from "lucide-react";
-import { autofill, blocked, done, idle, sections } from "@/lib/flow";
+import { autofill, blocked, idle, sections } from "@/lib/flow";
 import { askNotificationPermission } from "@/lib/hooks";
 import type { Task } from "@/lib/types";
 import { SplitDialog } from "./SplitDialog";
 import { ParentLine, TaskMeta } from "./TaskCard";
-import { cx, useMC } from "./ui";
+import { cx, markDone, useMC } from "./ui";
 
 const IDLE_OPTIONS: { label: string; min: number | null }[] = [
   { label: "None", min: null },
@@ -102,7 +102,7 @@ export function MainCard({ task, onDropTask }: { task: Task | null; onDropTask: 
             label="Done"
             hint="Finished"
             tone="success"
-            onClick={() => apply(done(tasks, task, today))}
+            onClick={() => markDone({ tasks, today, apply }, task)}
           />
           <ActionButton
             icon={<OctagonAlert className="size-5" />}

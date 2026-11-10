@@ -423,12 +423,13 @@ async function upsertState(taskId: string, patch: TaskPatch, name?: string) {
   }
 }
 
-export async function updateTaskInNotion(id: string, patch: TaskPatch) {
+/** Returns a warning when only Mission Control's own fields couldn't be saved (the task itself was). */
+export async function updateTaskInNotion(id: string, patch: TaskPatch): Promise<string | null> {
   const board = await whichBoard(id);
   if (board === "personal") {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await notion().pages.update({ page_id: id, properties: patchToProperties(patch) as any });
-    return;
+    return null;
   }
   const { native, state } = splitPatch(patch);
   if (Object.keys(native).length) {
@@ -436,7 +437,19 @@ export async function updateTaskInNotion(id: string, patch: TaskPatch) {
     await notion().pages.update({ page_id: id, properties: patchToProperties(native, board) as any });
     if (native.name) boardCache.set(normalizeId(id), { board, name: native.name });
   }
-  await upsertState(id, state, native.name);
+  try {
+    await upsertState(id, state, native.name);
+    return null;
+  } catch (err) {
+    return stateWarning(err);
+  }
+}
+
+function stateWarning(err: unknown) {
+  return accessWarning("Mission Control Task State", err).replace(
+    /\.$/,
+    ", so lanes and Signal/Noise for Influity tasks weren't saved (the status was).",
+  );
 }
 
 /** New tasks go to the parent's board (a split on an Influity task stays on Influity). */
@@ -461,7 +474,10 @@ export async function createTaskInNotion(t: NewTask, sprintId: string | null): P
     properties: properties as any,
   });
   boardCache.set(normalizeId(page.id), { board, name: t.name });
-  if (board !== "personal" && (lane.focus || lane.noise)) await upsertState(page.id, lane, t.name);
+  if (board !== "personal" && (lane.focus || lane.noise)) {
+    // The task exists either way; its lane is best effort.
+    await upsertState(page.id, lane, t.name).catch((err) => console.error(stateWarning(err)));
+  }
   return page.id;
 }
 

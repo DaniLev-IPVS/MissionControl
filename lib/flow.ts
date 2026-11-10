@@ -12,6 +12,7 @@ import {
   DASHBOARD_SLOTS,
   NOISE_DUE_DAYS,
   isBlockedStatus,
+  isDoneStatus,
   isTodoStatus,
   type Focus,
 } from "./config";
@@ -138,21 +139,47 @@ function finish(tasks: Task[], today: string, primary: Change[], creates: NewTas
 }
 
 // ---- Main card actions --------------------------------------------------------
+/** Every open item under a task (missions and their tasks under a project, tasks under a mission). */
+export function descendants(tasks: Task[], id: string): Task[] {
+  const kids = new Map<string, Task[]>();
+  for (const t of tasks) if (t.parentId) kids.set(t.parentId, [...(kids.get(t.parentId) ?? []), t]);
+  const out: Task[] = [];
+  const seen = new Set<string>([id]);
+  const walk = (pid: string) => {
+    for (const k of kids.get(pid) ?? []) {
+      if (seen.has(k.id)) continue;
+      seen.add(k.id);
+      out.push(k);
+      walk(k.id);
+    }
+  };
+  walk(id);
+  return out;
+}
+
+const doneDetails = (_task: Task, doneAs: "Signal" | "Noise", now: Date): TaskPatch => ({
+  status: "Done",
+  doneAs,
+  doneAt: now.toISOString(),
+  focus: null,
+  focusOrder: null,
+  idleSince: null,
+  idleReminder: null,
+});
+
+/** How many open items marking this done would also close. */
+export const openUnder = (tasks: Task[], task: Task) =>
+  descendants(tasks, task.id).filter((t) => !isDoneStatus(t.status)).length;
+
+/** Done. A project or mission takes everything still open under it along. */
 export function done(tasks: Task[], task: Task, today: string, now = new Date()): Plan {
+  // Planned work (in a Focus lane, not a pop-up) is signal; anything else is noise.
+  const doneAs = task.focus && !task.noise ? "Signal" : "Noise";
+  const under = descendants(tasks, task.id).filter((t) => !isDoneStatus(t.status));
   return finish(tasks, today, [
-    {
-      id: task.id,
-      patch: {
-        status: "Done",
-        // Planned work (in a Focus lane, not a pop-up) is signal; anything else is noise.
-        doneAs: task.focus && !task.noise ? "Signal" : "Noise",
-        doneAt: now.toISOString(),
-        focus: null,
-        focusOrder: null,
-        idleSince: null,
-        idleReminder: null,
-      },
-    },
+    { id: task.id, patch: doneDetails(task, doneAs, now) },
+    // Sub-items count the same way their own lane would have.
+    ...under.map((t) => ({ id: t.id, patch: doneDetails(t, t.focus && !t.noise ? "Signal" : "Noise", now) })),
   ]);
 }
 

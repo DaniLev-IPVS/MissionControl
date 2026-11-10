@@ -30,14 +30,28 @@ const Plan = z.object({
 
 const MAX_PLAN = 1 + DASHBOARD_SLOTS + TODAY_TARGET.max;
 
+const Recommendation = z.object({
+  reply: z.string().describe("One short sentence summing up the suggested day."),
+  picks: z
+    .array(
+      z.object({
+        alias: z.string().describe("Alias of an open task, mission or project"),
+        why: z.string().describe("Why today, in 12 words or fewer"),
+      }),
+    )
+    .describe("Best first. Mostly tasks; a mission or project only when the whole thing should move today."),
+});
+
 export async function POST(request: Request) {
   await connection();
-  let body: { messages?: Msg[]; draft?: string[] };
+  let body: { messages?: Msg[]; draft?: string[]; recommend?: boolean };
   try {
     body = await request.json();
   } catch {
     return Response.json({ error: "bad json" }, { status: 400 });
   }
+  if (body.recommend) return recommend();
+
   const messages = (body.messages ?? [])
     .filter((m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
     .slice(-20)
@@ -130,6 +144,93 @@ Current draft order: ${draft.map((id) => aliasOf.get(id)).join(", ") || "(empty)
     console.error("planner failed", err);
     return Response.json({ error: "The planner couldn't answer. Try again, or plan by dragging." }, { status: 502 });
   }
+}
+
+// ---- "Recommend me today's tasks" -------------------------------------------------------
+type Pick = { id: string; why: string };
+const PRIORITY: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
+
+async function recommend() {
+  const board = await getBoard();
+  const tasks = board.tasks.filter((t) => !t.id.startsWith("tmp-"));
+  const aliasOf = new Map(tasks.map((t, i) => [t.id, `t${i + 1}`]));
+  const alias = new Map(tasks.map((t, i) => [`t${i + 1}`, t.id]));
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const deptName = new Map(board.departments.map((d) => [d.id, d.name]));
+  const hasKids = new Set(tasks.map((t) => t.parentId).filter(Boolean) as string[]);
+  const line = (t: Task) =>
+    [
+      aliasOf.get(t.id),
+      t.level ? LEVEL_LABELS[t.level] : "Task",
+      t.name,
+      t.departmentIds.map((d) => deptName.get(d)).filter(Boolean).join(", ") || "no department",
+      t.parentId && byId.has(t.parentId) ? `in ${aliasOf.get(t.parentId)}` : "",
+      t.priority ?? "",
+      t.due ? `due ${t.due}` : "",
+      t.status ?? "",
+      t.focus ? `already planned (${t.focus})` : "",
+      hasKids.has(t.id) ? "has open sub-items" : "",
+    ]
+      .filter(Boolean)
+      .join(" | ");
+
+  const fallback = (note: string) => Response.json({ reply: note, picks: heuristicPicks(tasks, hasKids) });
+  const hasAI = !!(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN);
+  if (!hasAI) return fallback("AI isn't set up here, so these are ranked by priority, due date and what's in progress.");
+
+  try {
+    const { output } = await generateText({
+      model: PLANNER_MODEL,
+      system: `You recommend what the user should work on today in Mission Control, a signal-over-noise focus board.
+Today is ${new Date().toDateString()}.
+Pick ${1 + DASHBOARD_SLOTS + TODAY_TARGET.min}-${MAX_PLAN} items, best first. Favour: P0, due soon or overdue, already in progress, unblocking others, momentum on one or two projects rather than scattering.
+Prefer actionable tasks (lowest level). Recommend a whole mission or project only when it should clearly move as one piece today.
+Skip Blocked items. Give each pick a short reason.
+
+Open items (alias | level | name | department | parent | priority | due | status | notes):
+${tasks.map(line).join("\n")}`,
+      prompt: "Recommend today's tasks.",
+      output: Output.object({ schema: Recommendation }),
+    });
+    const seen = new Set<string>();
+    const picks: Pick[] = output.picks
+      .map((p) => ({ id: alias.get(p.alias) ?? "", why: p.why.slice(0, 140) }))
+      .filter((p) => p.id && !seen.has(p.id) && !!seen.add(p.id))
+      .slice(0, MAX_PLAN);
+    return Response.json({ reply: output.reply, picks });
+  } catch (err) {
+    console.error("recommend failed", err);
+    return fallback("The AI didn't answer, so these are ranked by priority, due date and what's in progress.");
+  }
+}
+
+function heuristicPicks(tasks: Task[], hasKids: Set<string>): Pick[] {
+  const today = new Date().toISOString().slice(0, 10);
+  const soon = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+  const score = (t: Task) =>
+    (PRIORITY[t.priority ?? ""] ?? 3) * 10 +
+    (t.due && t.due < today ? -15 : t.due && t.due <= soon ? -8 : 0) +
+    (t.status === "Working on it" ? -6 : 0) +
+    (t.focus ? -4 : 0);
+  const why = (t: Task) =>
+    t.due && t.due < today
+      ? `Overdue since ${t.due}`
+      : t.due === today
+        ? "Due today"
+        : t.due && t.due <= soon
+          ? `Due ${t.due}`
+          : t.status === "Working on it"
+            ? "Already in progress"
+            : t.priority === "P0"
+              ? "Top priority (P0)"
+              : t.focus
+                ? "Already on today's board"
+                : `${t.priority ?? "Open"} and ready to start`;
+  return tasks
+    .filter((t) => !hasKids.has(t.id) && t.status !== "Blocked" && t.status !== "BLOCKING")
+    .sort((a, b) => score(a) - score(b))
+    .slice(0, 1 + DASHBOARD_SLOTS + TODAY_TARGET.max - 2)
+    .map((t) => ({ id: t.id, why: why(t) }));
 }
 
 /** Local development without AI credentials: add tasks whose names share words with the message. */

@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { LEVEL_LABELS, type Level } from "@/lib/config";
-import { addDays, type Plan } from "@/lib/flow";
+import { addDays, done, openUnder, type Plan } from "@/lib/flow";
 import { formatElapsed, useNow } from "@/lib/hooks";
 import type { Board, Task } from "@/lib/types";
 import type { Runner } from "@/lib/useBoard";
@@ -141,6 +141,13 @@ export function IdleTimer({ task, large = false }: { task: Task; large?: boolean
 }
 
 // ---- Modal ---------------------------------------------------------------------------------------
+/** Done, with a check first when it would also close sub-items. */
+export function markDone(mc: Pick<MC, "tasks" | "today" | "apply">, task: Task) {
+  const n = openUnder(mc.tasks, task);
+  if (n && !window.confirm(`Mark "${task.name}" done?\n\nThis also marks the ${n} open item${n === 1 ? "" : "s"} under it as done.`)) return;
+  return mc.apply(done(mc.tasks, task, mc.today));
+}
+
 /** A ref that always holds the latest value, for effects that should run once. */
 export function useLatest<T>(value: T) {
   const ref = useRef(value);

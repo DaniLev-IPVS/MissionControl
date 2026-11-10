@@ -110,13 +110,16 @@ export function useBoard() {
         return next;
       };
       try {
-        await run(changes, creates);
+        const res = (await run(changes, creates)) as { ok?: boolean; error?: string; warnings?: string[] } | undefined;
+        if (res && res.ok === false) throw new Error(res.error ?? "save failed");
         setPending(markDone(ids));
         setTemps(markDone(tempIds));
-        setSaveError(null);
+        // Saved, but something on the side (e.g. Influity lanes) wasn't: say so, keep the change.
+        setSaveError(res?.warnings?.length ? `Saved. ${res.warnings[0]}` : null);
         poll();
         return true;
-      } catch {
+      } catch (err) {
+        const why = err instanceof Error && err.message && !/Server Components render/.test(err.message) ? err.message : null;
         const drop = <T,>(keys: string[]) => (prev: Map<string, T>) => {
           const next = new Map(prev);
           keys.forEach((k) => next.delete(k));
@@ -124,7 +127,7 @@ export function useBoard() {
         };
         setPending(drop(ids));
         setTemps(drop(tempIds));
-        setSaveError("Couldn't save to Notion. Your last change was undone.");
+        setSaveError(`${why ?? "Couldn't save to Notion."} Your last change was undone.`);
         return false;
       } finally {
         setInFlight((n) => n - 1);
