@@ -1,12 +1,12 @@
 import "server-only";
-import type { Sprint, Task, TaskPatch } from "./types";
+import type { Department, NewTask, Task, TaskPatch } from "./types";
 
 // Fake data for local development without a Notion token.
-type Store = { sprints: Sprint[]; tasks: Task[]; titles: Record<string, string> };
+type Store = { tasks: Task[]; done: { id: string; name: string }[]; departments: Department[] };
 
 const g = globalThis as unknown as { __mockStore?: Store };
 
-function today(offset = 0) {
+function day(offset = 0) {
   const d = new Date();
   d.setDate(d.getDate() + offset);
   return d.toISOString().slice(0, 10);
@@ -14,25 +14,47 @@ function today(offset = 0) {
 
 function seed(): Store {
   const now = new Date().toISOString();
-  const t = (id: string, name: string, s: string, extra: Partial<Task> = {}): Task => ({
-    id, url: "https://www.notion.so", name, status: s, priority: "P1", level: "task",
-    due: null, departmentIds: ["dept-a"], parentId: "parent-1", hasChildren: false, editedAt: now, ...extra,
+  let n = 0;
+  const t = (name: string, extra: Partial<Task> = {}): Task => ({
+    id: extra.id ?? `m${++n}`, url: "https://www.notion.so", name, status: "To Start", priority: "P1",
+    level: "task", due: null, estMin: null, departmentIds: ["d-ops"], parentId: null, sprintId: "s-cur",
+    focus: null, focusOrder: null, noise: false, idleSince: null, idleReminder: null, idleMinutes: 0,
+    idleLog: "", createdAt: now, editedAt: now, ...extra,
   });
   return {
-    sprints: [
-      { id: "sprint-2", name: "Sprint 2", status: "Current", start: today(-8), end: today(5) },
-      { id: "sprint-3", name: "Sprint 3", status: "Next", start: null, end: null },
-      { id: "sprint-1", name: "Sprint 1", status: "Last", start: today(-22), end: today(-9) },
+    departments: [
+      { id: "d-ops", name: "Studio Ops" },
+      { id: "d-sales", name: "Sales" },
+      { id: "d-prod", name: "Production" },
+      { id: "d-fin", name: "Finance" },
     ],
-    titles: { "dept-a": "Studio Ops", "dept-b": "Client Work", "parent-1": "Launch checkpoint", "parent-2": "Finance setup" },
+    done: [{ id: "x1", name: "Send the weekly update" }],
     tasks: [
-      t("parent-1", "Launch checkpoint", "Working on it", { level: "mission", hasChildren: true, parentId: null }),
-      t("m1", "Draft the pitch deck", "Working on it", { priority: "P0", due: today(-2) }),
-      t("m2", "Review the new logo files", "To Start", { due: today(1) }),
-      t("m3", "Call the lead list", "To Start", { departmentIds: ["dept-b"], parentId: "parent-2", due: today(2) }),
-      t("m4", "Wait on bank approval", "Blocked", { priority: "P0", departmentIds: ["dept-b"], parentId: "parent-2" }),
-      t("m5", "Set up accounting export", "Done", { priority: "P2", parentId: "parent-2", departmentIds: ["dept-b"] }),
-      t("m6", "Plan next video batch", "Groom", { priority: null }),
+      // Projects
+      t("Sales", { id: "p-sales", level: "project", departmentIds: ["d-sales"], status: "Working on it", priority: "P0" }),
+      t("Production", { id: "p-prod", level: "project", departmentIds: ["d-prod"], status: "Working on it" }),
+      t("Brand refresh", { id: "p-brand", level: "project", departmentIds: ["d-ops"], status: "Groom", priority: "P2" }),
+      // Missions
+      t("Close the pilot deal", { id: "ms-deal", level: "mission", parentId: "p-sales", departmentIds: ["d-sales"], priority: "P0", due: day(3) }),
+      t("Ship the next video batch", { id: "ms-batch", level: "mission", parentId: "p-prod", departmentIds: ["d-prod"] }),
+      t("Open the business bank account", { id: "ms-bank", level: "mission", departmentIds: ["d-fin"], priority: "P0", due: day(1) }),
+      t("Hire a second editor", { id: "ms-hire", level: "mission", parentId: "p-prod", departmentIds: ["d-prod"], priority: "P2" }),
+      // Tasks
+      t("Draft the pilot proposal", { parentId: "ms-deal", departmentIds: ["d-sales"], priority: "P0", focus: "main", focusOrder: 1, status: "Working on it", estMin: 45 }),
+      t("Render the three hero shots", { parentId: "ms-batch", departmentIds: ["d-prod"], focus: "dashboard", focusOrder: 1, idleSince: new Date(Date.now() - 7 * 60000).toISOString(), idleReminder: new Date(Date.now() + 8 * 60000).toISOString(), status: "Working on it" }),
+      t("Write captions for batch 4", { parentId: "ms-batch", departmentIds: ["d-prod"], focus: "dashboard", focusOrder: 2, estMin: 20 }),
+      t("Price the pilot options", { parentId: "ms-deal", departmentIds: ["d-sales"], focus: "dashboard", focusOrder: 3, priority: "P0" }),
+      t("Collect company documents", { parentId: "ms-bank", departmentIds: ["d-fin"], focus: "today", focusOrder: 1, priority: "P0", due: day(0) }),
+      t("Book the review call", { parentId: "ms-deal", departmentIds: ["d-sales"], focus: "today", focusOrder: 2, estMin: 10 }),
+      t("Wait on the bank's answer", { parentId: "ms-bank", departmentIds: ["d-fin"], focus: "today", focusOrder: 3, status: "Blocked" }),
+      t("Plan next week's shoot", { parentId: "ms-batch", departmentIds: ["d-prod"], focus: "today", focusOrder: 4, priority: "P2" }),
+      // Noise
+      t("Reply to the accountant", { departmentIds: ["d-fin"], noise: true, priority: "P1" }),
+      t("Renew the domain", { departmentIds: ["d-ops"], due: day(1), priority: "P2" }),
+      // Backlog
+      t("Shortlist editor candidates", { parentId: "ms-hire", departmentIds: ["d-prod"], priority: "P2" }),
+      t("Moodboard for the new logo", { parentId: "p-brand", level: "mission", departmentIds: ["d-ops"], priority: "P2" }),
+      t("Clean up the asset drive", { departmentIds: ["d-ops"], priority: null }),
     ],
   };
 }
@@ -43,7 +65,25 @@ export function mockStore(): Store {
 }
 
 export function mockUpdate(id: string, patch: TaskPatch) {
-  const task = mockStore().tasks.find((t) => t.id === id);
+  const s = mockStore();
+  const task = s.tasks.find((t) => t.id === id);
   if (!task) throw new Error("Task not found");
   Object.assign(task, patch, { editedAt: new Date().toISOString() });
+  if (task.status === "Done" || task.status === "Cancelled") {
+    s.tasks = s.tasks.filter((t) => t.id !== id);
+    if (task.status === "Done") s.done.unshift({ id: task.id, name: task.name });
+  }
+}
+
+export function mockCreate(t: NewTask): string {
+  const id = `new-${Math.random().toString(36).slice(2, 8)}`;
+  const now = new Date().toISOString();
+  mockStore().tasks.push({
+    id, url: "https://www.notion.so", name: t.name, status: "To Start", priority: t.priority ?? null,
+    level: t.level, due: t.due ?? null, estMin: null, departmentIds: t.departmentIds ?? [],
+    parentId: t.parentId ?? null, sprintId: "s-cur", focus: t.focus ?? null, focusOrder: t.focusOrder ?? null,
+    noise: t.noise ?? false, idleSince: null, idleReminder: null, idleMinutes: 0, idleLog: "",
+    createdAt: now, editedAt: now,
+  });
+  return id;
 }

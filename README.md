@@ -2,7 +2,22 @@
 
 A website version of the **Personal Sprint Work Board** in Notion. Notion stays the only source of truth, and the site reads from it and writes back to it.
 
-> **Status:** only the plumbing is built. `app/page.tsx` is a bare debug table that proves the sync works. The real UI comes from the wireframe and should use the `useBoard()` hook.
+## The Signal / Noise system
+
+| Lane | What it holds | Notion `Focus` |
+| --- | --- | --- |
+| **Currently working on** | The single main task, with Split, Done, Blocked and Idle buttons | `Main` |
+| **Task switch** | 3 tasks that are next in line, worked on while Main is idle | `Dashboard` |
+| **Today** | 2–6 planned tasks that feed the task switch | `Today` |
+| **Noise** | Unplanned pop-ups (`Noise` ticked) and tasks due within 2 days | empty |
+| **To-do list** | Everything else | empty |
+
+- Tasks flow upward in `Focus Order`. When Main finishes (Done), gets stuck (Blocked) or goes Idle, the next free Task switch task moves up and Today refills the Task switch.
+- **Idle** starts a timer (`Idle Since`) and an optional reminder (`Idle Reminder`). When the task returns to Main, the time is added to `Idle Minutes` and logged in `Idle Log`.
+- **Split** breaks a task into sibling tasks, or a project or mission into children.
+- Levels are Project › Mission › Task, and tasks are grouped by **Departments**.
+
+The flow rules live in `lib/flow.ts` as pure functions. Each action returns the exact Notion edits to make.
 
 ## How sync works
 
@@ -20,7 +35,9 @@ A website version of the **Personal Sprint Work Board** in Notion. Notion stays 
 
 - `lib/notion.ts`: Notion API calls (query sprints and tasks, update a task) and the property mapping.
 - `lib/board.ts`: cached loader for the board (sprints, tasks, department and parent titles).
-- `lib/useBoard.ts`: client hook for live polling and optimistic `edit(task, patch)`. **Build the UI on this.**
+- `lib/useBoard.ts`: client hook for live polling and optimistic `apply(plan)`.
+- `lib/flow.ts`: the Signal / Noise flow engine.
+- `components/`: the glass UI (MissionControl, MainCard, TaskCard, QuickAdd, SplitDialog, DetailsDrawer).
 - `app/actions.ts`: `updateTask` server action (validates input, writes to Notion, expires the cache) and `login`.
 - `app/api/board/route.ts`: board JSON with ETag/304 support.
 - `app/api/notion/webhook/route.ts`: Notion webhook (handshake, signature check, cache expiry).

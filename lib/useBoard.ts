@@ -2,56 +2,42 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { updateTask } from "@/app/actions";
+import { applyChanges } from "@/app/actions";
+import { applyLocal, draftTask, type Plan } from "./flow";
 import type { Board, Task, TaskPatch } from "./types";
 
-// Live sync between the browser and Notion. UI-agnostic: any view can use it.
+// Live sync between the browser and Notion. UI-agnostic.
 //
 //   Notion -> browser: polls /api/board every 2s (304 when nothing changed).
-//                      The server cache is expired by the Notion webhook, so
-//                      edits in Notion show up as soon as Notion sends the event.
-//   browser -> Notion: edit() applies the change instantly (optimistic), saves it
-//                      to Notion via a server action, and reverts on failure.
+//                      The server cache is expired by the Notion webhook.
+//   browser -> Notion: apply(plan) shows the result instantly (optimistic),
+//                      saves it via a server action, and reverts on failure.
 
 const POLL_MS = 2000;
 
 type Pending = { patch: TaskPatch; doneSeq?: number };
+type Temp = { task: Task; doneSeq?: number };
 
-export type SyncState = {
-  board: Board | null;
-  tasks: Task[]; // board tasks with unsaved edits applied
-  error: string | null; // last poll error
-  saveError: string | null; // last failed save
-  lastSync: number | null; // ms timestamp of last successful poll
-  saving: Set<string>; // task ids with a save in flight
-  sprintId: string | null;
-  setSprint: (id: string) => void;
-  edit: (task: Task, patch: TaskPatch) => Promise<void>;
-  refresh: () => void;
-};
-
-export function useBoard(initialSprintId: string | null = null): SyncState {
+export function useBoard() {
   const [board, setBoard] = useState<Board | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [lastSync, setLastSync] = useState<number | null>(null);
-  const [sprintId, setSprintId] = useState<string | null>(initialSprintId);
   const [pending, setPending] = useState<Map<string, Pending>>(new Map());
+  const [temps, setTemps] = useState<Map<string, Temp>>(new Map());
+  const [inFlight, setInFlight] = useState(0);
 
   const router = useRouter();
   const etag = useRef<string | null>(null);
   const seq = useRef(0);
-  const sprintRef = useRef<string | null>(initialSprintId);
 
   const poll = useCallback(async () => {
     const mySeq = ++seq.current;
-    const sprint = sprintRef.current;
     try {
-      const res = await fetch(`/api/board${sprint ? `?sprint=${encodeURIComponent(sprint)}` : ""}`, {
+      const res = await fetch("/api/board", {
         cache: "no-store",
         headers: etag.current ? { "If-None-Match": etag.current } : {},
       });
-      if (sprint !== sprintRef.current) return; // sprint switched mid-flight
       if (res.status === 401) {
         router.replace("/login");
         return;
@@ -64,8 +50,8 @@ export function useBoard(initialSprintId: string | null = null): SyncState {
       }
       setError(null);
       setLastSync(Date.now());
-      // Drop optimistic edits once a poll that started after the save returns.
-      setPending((prev) => {
+      // Drop optimistic state once a poll that started after the save returns.
+      const settled = <T extends { doneSeq?: number }>(prev: Map<string, T>) => {
         let changed = false;
         const next = new Map(prev);
         for (const [id, p] of next) {
@@ -75,7 +61,9 @@ export function useBoard(initialSprintId: string | null = null): SyncState {
           }
         }
         return changed ? next : prev;
-      });
+      };
+      setPending(settled);
+      setTemps(settled);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Sync failed");
     }
@@ -94,42 +82,47 @@ export function useBoard(initialSprintId: string | null = null): SyncState {
     };
   }, [poll]);
 
-  const setSprint = useCallback(
-    (id: string) => {
-      sprintRef.current = id;
-      etag.current = null;
-      setSprintId(id);
-      setBoard(null);
-      poll();
-    },
-    [poll],
-  );
-
-  const edit = useCallback(
-    async (task: Task, patch: TaskPatch) => {
+  const apply = useCallback(
+    async ({ changes, creates }: Plan) => {
+      if (!changes.length && !creates.length) return;
+      const ids = changes.map((c) => c.id);
+      const tempIds = creates.map((c) => c.tempId);
       setPending((prev) => {
         const next = new Map(prev);
-        next.set(task.id, { patch: { ...prev.get(task.id)?.patch, ...patch } });
+        for (const c of changes) next.set(c.id, { patch: { ...prev.get(c.id)?.patch, ...c.patch } });
         return next;
       });
+      setTemps((prev) => {
+        const next = new Map(prev);
+        for (const c of creates) next.set(c.tempId, { task: draftTask(c) });
+        return next;
+      });
+      setInFlight((n) => n + 1);
+      const markDone = <T extends { doneSeq?: number }>(keys: string[]) => (prev: Map<string, T>) => {
+        const next = new Map(prev);
+        for (const k of keys) {
+          const p = next.get(k);
+          if (p) next.set(k, { ...p, doneSeq: seq.current });
+        }
+        return next;
+      };
       try {
-        await updateTask(task.id, patch);
-        setPending((prev) => {
-          const p = prev.get(task.id);
-          if (!p) return prev;
-          const next = new Map(prev);
-          next.set(task.id, { ...p, doneSeq: seq.current });
-          return next;
-        });
+        await applyChanges(changes, creates);
+        setPending(markDone(ids));
+        setTemps(markDone(tempIds));
         setSaveError(null);
         poll();
       } catch {
-        setPending((prev) => {
+        const drop = <T,>(keys: string[]) => (prev: Map<string, T>) => {
           const next = new Map(prev);
-          next.delete(task.id);
+          keys.forEach((k) => next.delete(k));
           return next;
-        });
-        setSaveError(`Couldn't save "${task.name}" to Notion. Reverted.`);
+        };
+        setPending(drop(ids));
+        setTemps(drop(tempIds));
+        setSaveError("Couldn't save to Notion. Your last change was undone.");
+      } finally {
+        setInFlight((n) => n - 1);
       }
     },
     [poll],
@@ -137,16 +130,24 @@ export function useBoard(initialSprintId: string | null = null): SyncState {
 
   const tasks = useMemo(() => {
     if (!board) return [];
-    return board.tasks.map((t) => {
-      const p = pending.get(t.id);
-      return p ? { ...t, ...p.patch } : t;
-    });
-  }, [board, pending]);
+    const merged = applyLocal(
+      board.tasks,
+      [...pending].map(([id, p]) => ({ id, patch: p.patch })),
+    );
+    const known = new Set(merged.map((t) => t.id));
+    for (const [, t] of temps) if (!known.has(t.task.id)) merged.push(t.task);
+    return merged;
+  }, [board, pending, temps]);
 
-  const saving = useMemo(
-    () => new Set([...pending].filter(([, p]) => p.doneSeq === undefined).map(([id]) => id)),
-    [pending],
-  );
-
-  return { board, tasks, error, saveError, lastSync, saving, sprintId, setSprint, edit, refresh: poll };
+  return {
+    board,
+    tasks,
+    error,
+    saveError,
+    clearSaveError: () => setSaveError(null),
+    lastSync,
+    saving: inFlight > 0,
+    apply,
+    refresh: poll,
+  };
 }

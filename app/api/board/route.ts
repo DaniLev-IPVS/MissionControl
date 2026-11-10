@@ -3,9 +3,8 @@ import { getBoard } from "@/lib/board";
 
 export async function GET(request: NextRequest) {
   await connection();
-  const sprintId = request.nextUrl.searchParams.get("sprint");
   try {
-    const board = await getBoard(sprintId);
+    const board = await getBoard();
     // ETag ignores fetchedAt so unchanged boards answer 304 with no body.
     const { fetchedAt, ...content } = board;
     void fetchedAt;

@@ -4,37 +4,42 @@ export const TASKS_DATA_SOURCE_ID =
   process.env.NOTION_TASKS_DATA_SOURCE_ID ?? "2c463a9c-0965-816d-a00d-000b07b5c00a";
 export const SPRINTS_DATA_SOURCE_ID =
   process.env.NOTION_SPRINTS_DATA_SOURCE_ID ?? "31163a9c-0965-804d-a7fc-000b570f0c20";
+export const DEPARTMENTS_DATA_SOURCE_ID =
+  process.env.NOTION_DEPARTMENTS_DATA_SOURCE_ID ?? "2c463a9c-0965-816b-85c1-000baa6065d1";
+// New tasks are assigned to this Notion user so they show in "assigned to me" views.
+export const DEFAULT_ASSIGNEE_ID =
+  process.env.NOTION_DEFAULT_ASSIGNEE_ID ?? "e89eed68-ee97-4241-ab9b-7588b0e4bad8";
 
 export const BOARD_TAG = "board";
 
 // No token in development = run against an in-memory mock board.
 export const USE_MOCK = !process.env.NOTION_TOKEN && process.env.NODE_ENV !== "production";
 
-// Status options in the Personal Ticket Board, grouped the way Notion groups them.
+// ---- Status ---------------------------------------------------------------
 export const STATUS_GROUPS = {
   todo: ["To Start", "Unblocked", "Groom", "Backlog"],
   blocked: ["Blocked", "BLOCKING"],
   doing: ["Working on it", "Under Review", "Fulfilled"],
   done: ["Done", "Cancelled"],
 } as const;
+export const ALL_STATUSES = Object.values(STATUS_GROUPS).flat();
+export const PRIORITIES = ["P0", "P1", "P2"] as const;
 
-export const COLUMNS = [
-  { key: "todo", title: "To do", dropStatus: "To Start" },
-  { key: "blocked", title: "Blocked", dropStatus: "Blocked" },
-  { key: "doing", title: "In progress", dropStatus: "Working on it" },
-  { key: "done", title: "Done", dropStatus: "Done" },
-] as const;
+export const isBlockedStatus = (s: string | null) =>
+  (STATUS_GROUPS.blocked as readonly string[]).includes(s ?? "");
+export const isTodoStatus = (s: string | null) =>
+  !s || (STATUS_GROUPS.todo as readonly string[]).includes(s);
 
-// Task levels: Project > Mission > Task. Notion was renamed from
-// Mission > Checkpoint > Bite on 2026-11-10; the old names are still read
-// while the rename is in progress.
+// ---- Levels: Project > Mission > Task ---------------------------------------
+// Notion was renamed from Mission > Checkpoint > Bite on 2026-11-10; the old
+// names are still read while the option rename is in progress.
 export const LEVELS = ["project", "mission", "task"] as const;
 export type Level = (typeof LEVELS)[number];
 export const LEVEL_LABELS: Record<Level, string> = { project: "Project", mission: "Mission", task: "Task" };
+export const CHILD_LEVEL: Record<Level, Level> = { project: "mission", mission: "task", task: "task" };
 
 // "Mission" changed meaning (old top level -> new middle level), so it is
-// resolved from the Task Level options: while "Checkpoint" still exists,
-// Notion uses the old names.
+// resolved from the Task Level options: while "Checkpoint" exists, Notion uses the old names.
 export function levelFromNotion(name: string | null, oldNames: boolean): Level | null {
   switch (name) {
     case "Project": return "project";
@@ -45,6 +50,19 @@ export function levelFromNotion(name: string | null, oldNames: boolean): Level |
     default: return null;
   }
 }
+export function levelToNotion(level: Level, oldNames: boolean): string {
+  if (oldNames) return { project: "Mission", mission: "Checkpoint", task: "Bite" }[level];
+  return LEVEL_LABELS[level];
+}
 
-export const ALL_STATUSES = Object.values(STATUS_GROUPS).flat();
-export const PRIORITIES = ["P0", "P1", "P2"] as const;
+// ---- Focus stages (Signal / Noise) -----------------------------------------
+export const FOCUS = ["main", "dashboard", "today"] as const;
+export type Focus = (typeof FOCUS)[number];
+export const FOCUS_NOTION: Record<Focus, string> = { main: "Main", dashboard: "Dashboard", today: "Today" };
+export const focusFromNotion = (name: string | null): Focus | null =>
+  (Object.entries(FOCUS_NOTION).find(([, v]) => v === name)?.[0] as Focus) ?? null;
+
+export const DASHBOARD_SLOTS = 3;
+export const TODAY_TARGET = { min: 2, max: 6 };
+// Unplanned tasks due within this many days count as noise.
+export const NOISE_DUE_DAYS = 2;
