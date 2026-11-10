@@ -1,13 +1,30 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { AlarmClock, Layers, ListTodo, Mic, Plus, Radio, Search, SlidersHorizontal, Waves, Zap } from "lucide-react";
+import {
+  AlarmClock,
+  Layers,
+  ListTodo,
+  Mic,
+  Plus,
+  Radio,
+  Search,
+  SlidersHorizontal,
+  Sunrise,
+  Sunset,
+  Waves,
+  Zap,
+} from "lucide-react";
 import { DASHBOARD_SLOTS, LEVELS, LEVEL_LABELS, TODAY_TARGET, type Level } from "@/lib/config";
 import { localDay, lowestLevel, makeMain, moveTo, sections, snooze, type Lane } from "@/lib/flow";
 import { useNow, useReminders } from "@/lib/hooks";
 import type { Task } from "@/lib/types";
 import { useBoard } from "@/lib/useBoard";
+import { DaysView } from "./DaysView";
 import { DetailsDrawer } from "./DetailsDrawer";
+import { PlanView } from "./PlanView";
+import { SignOutDialog } from "./SignOutDialog";
+import { TimelineView } from "./TimelineView";
 import { MainCard } from "./MainCard";
 import { QuickAdd } from "./QuickAdd";
 import { TaskCard } from "./TaskCard";
@@ -15,6 +32,7 @@ import { DeptChip, MCContext, Segmented, cx, deptHue, useMC, type MC } from "./u
 
 type TypeFilter = "all" | "signal" | "noise";
 type SortKey = "flow" | "priority" | "due" | "level";
+type View = "focus" | "plan" | "timeline" | "days";
 
 const PRIORITY_RANK: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
 const LEVEL_RANK: Record<string, number> = { project: 0, mission: 1, task: 2 };
@@ -35,6 +53,9 @@ export default function MissionControl() {
   const [query, setQuery] = useState("");
   const [dragId, setDragId] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [view, setView] = useState<View>("focus");
+  const [planning, setPlanning] = useState(false); // signing in: Plan view in "start my day" mode
+  const [signingOut, setSigningOut] = useState(false);
 
   // Keyboard: N = add, V = add by voice.
   useEffect(() => {
@@ -190,6 +211,15 @@ export default function MissionControl() {
             {error ? "Sync error" : saving ? "Saving…" : age !== null && age < 10 ? "Live" : "Reconnecting"}
           </div>
 
+          <DayButton
+            state={!board!.day?.signedIn ? "out" : board!.day.signedOut ? "done" : "in"}
+            onSignIn={() => {
+              setPlanning(true);
+              setView("plan");
+            }}
+            onSignOut={() => setSigningOut(true)}
+          />
+
           <div className="flex gap-2">
             <button
               onClick={() => setAdding("voice")}
@@ -209,6 +239,44 @@ export default function MissionControl() {
           </div>
         </header>
 
+        {/* ---- Views ---- */}
+        <nav aria-label="Views" className="flex flex-wrap items-center gap-2">
+          <Segmented
+            label="View"
+            value={view}
+            onChange={(v) => {
+              setView(v);
+              if (v !== "plan") setPlanning(false);
+            }}
+            options={[
+              { value: "focus", label: "Focus" },
+              { value: "plan", label: "Plan" },
+              { value: "timeline", label: "Timeline" },
+              { value: "days", label: "Days" },
+            ]}
+          />
+          {planning && view === "plan" && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/20 px-3 py-1.5 text-xs font-semibold text-primary-hi">
+              <Sunrise className="size-3.5" /> Signing in: pick today&apos;s tasks, then Start my day
+            </span>
+          )}
+        </nav>
+
+        {view === "plan" && (
+          <PlanView
+            key={planning ? "signin" : "plan"}
+            planning={planning}
+            onDone={() => {
+              setPlanning(false);
+              setView("focus");
+            }}
+          />
+        )}
+        {view === "timeline" && <TimelineView />}
+        {view === "days" && <DaysView />}
+
+        {view === "focus" && (
+        <>
         {/* ---- Filters (folded behind a button on phones) ---- */}
         <button
           onClick={() => setFiltersOpen((o) => !o)}
@@ -394,6 +462,8 @@ export default function MissionControl() {
             )}
           </div>
         </div>
+        </>
+        )}
       </main>
 
       {/* ---- Overlays ---- */}
@@ -436,6 +506,7 @@ export default function MissionControl() {
       </div>
 
       {detailsTask && <DetailsDrawer task={detailsTask} onClose={() => setDetailsId(null)} />}
+      {signingOut && board!.day && <SignOutDialog onClose={() => setSigningOut(false)} />}
       {adding && <QuickAdd onClose={() => setAdding(null)} startListening={adding === "voice"} />}
     </MCContext.Provider>
   );
@@ -600,3 +671,38 @@ function Backlog({ tasks, grouped, onDragStart }: { tasks: Task[]; grouped: bool
   );
 }
 
+
+function DayButton({
+  state,
+  onSignIn,
+  onSignOut,
+}: {
+  state: "out" | "in" | "done";
+  onSignIn: () => void;
+  onSignOut: () => void;
+}) {
+  if (state === "in")
+    return (
+      <button
+        onClick={onSignOut}
+        className="inline-flex h-11 items-center gap-2 rounded-full px-4 text-sm font-semibold text-ink glass-chip hover:bg-white/12"
+        title="End the day and log it"
+      >
+        <Sunset className="size-4 text-noise" /> Sign out
+      </button>
+    );
+  return (
+    <button
+      onClick={onSignIn}
+      className={cx(
+        "inline-flex h-11 items-center gap-2 rounded-full px-4 text-sm font-semibold",
+        state === "out"
+          ? "bg-success/90 text-[#04210f] shadow-[0_8px_30px_-8px_rgb(7_202_107/0.8)] hover:bg-success"
+          : "text-ink-2 glass-chip hover:text-ink",
+      )}
+      title={state === "out" ? "Start the day: pick today's tasks" : "You signed out today. Sign back in?"}
+    >
+      <Sunrise className="size-4" /> {state === "out" ? "Sign in" : "Sign back in"}
+    </button>
+  );
+}

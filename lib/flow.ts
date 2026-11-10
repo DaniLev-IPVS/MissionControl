@@ -138,9 +138,21 @@ function finish(tasks: Task[], today: string, primary: Change[], creates: NewTas
 }
 
 // ---- Main card actions --------------------------------------------------------
-export function done(tasks: Task[], task: Task, today: string): Plan {
+export function done(tasks: Task[], task: Task, today: string, now = new Date()): Plan {
   return finish(tasks, today, [
-    { id: task.id, patch: { status: "Done", focus: null, focusOrder: null, idleSince: null, idleReminder: null } },
+    {
+      id: task.id,
+      patch: {
+        status: "Done",
+        // Planned work (in a Focus lane, not a pop-up) is signal; anything else is noise.
+        doneAs: task.focus && !task.noise ? "Signal" : "Noise",
+        doneAt: now.toISOString(),
+        focus: null,
+        focusOrder: null,
+        idleSince: null,
+        idleReminder: null,
+      },
+    },
   ]);
 }
 
@@ -192,6 +204,8 @@ export function makeMain(tasks: Task[], task: Task, today: string, now = new Dat
     });
   }
   if (isBlocked(task)) patch.status = "Working on it";
+  // Pulled straight from the Noise lane: it stays noise when it gets done.
+  if (laneOf(task, today) === "noise" && !task.noise) patch.noise = true;
   changes.push({ id: task.id, patch });
   return finish(tasks, today, changes);
 }
@@ -238,7 +252,8 @@ export function draftTask(n: NewTask): Task {
     id: n.tempId, url: "", name: n.name, status: "To Start", priority: n.priority ?? null, level: n.level,
     due: n.due ?? null, estMin: null, departmentIds: n.departmentIds ?? [], parentId: n.parentId ?? null,
     sprintId: null, focus: n.focus ?? null, focusOrder: n.focusOrder ?? null, noise: n.noise ?? false,
-    idleSince: null, idleReminder: null, idleMinutes: 0, idleLog: "", createdAt: now, editedAt: now,
+    idleSince: null, idleReminder: null, idleMinutes: 0, idleLog: "", doneAt: null, doneAs: null,
+    createdAt: now, editedAt: now,
   };
 }
 
@@ -272,6 +287,7 @@ export function split(tasks: Task[], task: Task, parts: string[], today: string)
   const s = sections(tasks, today);
   const isLeafLevel = !task.level || task.level === "task";
   const base = {
+    noise: task.noise,
     departmentIds: task.departmentIds,
     priority: task.priority,
     level: isLeafLevel ? ("task" as const) : CHILD_LEVEL[task.level!],
@@ -309,4 +325,51 @@ export function split(tasks: Task[], task: Task, parts: string[], today: string)
   }
   creates.push(...extras);
   return finish(tasks, today, changes, creates);
+}
+
+// ---- Day planning ------------------------------------------------------------------
+/** Where the n-th planned item lands: 1st = Main, next 3 = Task switch, rest = Today. */
+export function slotFor(index: number): Focus {
+  return index === 0 ? "main" : index <= DASHBOARD_SLOTS ? "dashboard" : "today";
+}
+
+/**
+ * Commit an ordered day plan. Planned ids get their lane and order; anything that
+ * was planned before but isn't any more goes back to the to-do list.
+ * `creates` (new tasks from the planner) are placed at their position in `order`.
+ */
+export function commitPlan(tasks: Task[], order: string[], creates: NewTask[] = []): Plan {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const createById = new Map(creates.map((c) => [c.tempId, c]));
+  const changes: Change[] = [];
+  const keep = new Set(order);
+  const counters: Record<Focus, number> = { main: 0, dashboard: 0, today: 0 };
+
+  order.forEach((id, i) => {
+    const focus = slotFor(i);
+    const focusOrder = ++counters[focus];
+    const draft = createById.get(id);
+    if (draft) {
+      draft.focus = focus;
+      draft.focusOrder = focusOrder;
+      return;
+    }
+    const t = byId.get(id);
+    if (!t) return;
+    const patch: TaskPatch = {};
+    if (t.focus !== focus) patch.focus = focus;
+    if (t.focusOrder !== focusOrder) patch.focusOrder = focusOrder;
+    if (focus === "main" && isTodoStatus(t.status)) patch.status = "Working on it";
+    if (Object.keys(patch).length) changes.push({ id, patch });
+  });
+  for (const t of tasks) {
+    if (t.focus && !keep.has(t.id)) changes.push({ id: t.id, patch: { focus: null, focusOrder: null } });
+  }
+  return { changes, creates: creates.filter((c) => keep.has(c.tempId)) };
+}
+
+/** Current plan order: Main, then Task switch, then Today. */
+export function currentOrder(tasks: Task[], today: string): string[] {
+  const s = sections(tasks, today);
+  return [...(s.main ? [s.main] : []), ...s.dashboard, ...s.today].map((t) => t.id);
 }

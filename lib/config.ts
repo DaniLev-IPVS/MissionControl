@@ -4,6 +4,8 @@ export const TASKS_DATA_SOURCE_ID =
   process.env.NOTION_TASKS_DATA_SOURCE_ID ?? "2c463a9c-0965-816d-a00d-000b07b5c00a";
 export const SPRINTS_DATA_SOURCE_ID =
   process.env.NOTION_SPRINTS_DATA_SOURCE_ID ?? "31163a9c-0965-804d-a7fc-000b570f0c20";
+export const DAYS_DATA_SOURCE_ID =
+  process.env.NOTION_DAYS_DATA_SOURCE_ID ?? "774940d5-dec4-4416-94f1-32e8a05108f8";
 export const DEPARTMENTS_DATA_SOURCE_ID =
   process.env.NOTION_DEPARTMENTS_DATA_SOURCE_ID ?? "2c463a9c-0965-816b-85c1-000baa6065d1";
 // New tasks are assigned to this Notion user so they show in "assigned to me" views.
@@ -63,6 +65,9 @@ export const focusFromNotion = (name: string | null): Focus | null =>
   (Object.entries(FOCUS_NOTION).find(([, v]) => v === name)?.[0] as Focus) ?? null;
 
 export const DASHBOARD_SLOTS = 3;
+export const TIME_ZONE = "America/Toronto";
+// The AI planner (via Vercel AI Gateway).
+export const PLANNER_MODEL = process.env.PLANNER_MODEL ?? "anthropic/claude-sonnet-5.5";
 export const TODAY_TARGET = { min: 2, max: 6 };
 // Unplanned tasks due within this many days count as noise.
 export const NOISE_DUE_DAYS = 2;

@@ -4,11 +4,11 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { updateTag } from "next/cache";
 import { AUTH_COOKIE, authToken } from "@/lib/auth";
-import { getCurrentSprintId } from "@/lib/board";
+import { getCurrentSprintId, getHistory, todayInZone } from "@/lib/board";
 import { ALL_STATUSES, BOARD_TAG, FOCUS, LEVELS, PRIORITIES, USE_MOCK } from "@/lib/config";
-import { mockCreate, mockUpdate } from "@/lib/mock";
-import { createTaskInNotion, updateTaskInNotion } from "@/lib/notion";
-import type { Change, NewTask, TaskPatch } from "@/lib/types";
+import { mockCreate, mockCreateDay, mockUpdate, mockUpdateDay } from "@/lib/mock";
+import { createDay, createTaskInNotion, updateDay, updateTaskInNotion } from "@/lib/notion";
+import type { Change, DayStats, NewTask, TaskPatch } from "@/lib/types";
 
 // Server actions are reachable by POST, so validate everything.
 const ID = /^[\w-]{1,64}$/;
@@ -57,6 +57,14 @@ function cleanPatch(p: TaskPatch): TaskPatch {
     if (typeof p.idleLog !== "string") throw new Error("Bad idle log");
     c.idleLog = p.idleLog.slice(-2000);
   }
+  if (p.doneAt !== undefined) {
+    if (p.doneAt !== null && !isISO(p.doneAt)) throw new Error("Bad done time");
+    c.doneAt = p.doneAt;
+  }
+  if (p.doneAs !== undefined) {
+    if (p.doneAs !== null && !oneOf(["Signal", "Noise"], p.doneAs)) throw new Error("Bad done as");
+    c.doneAs = p.doneAs;
+  }
   return c;
 }
 
@@ -78,6 +86,12 @@ function cleanNew(t: NewTask): NewTask {
 
 // Applies a batch of edits and new tasks, in order. Returns real ids for new tasks.
 export async function applyChanges(changes: Change[], creates: NewTask[] = []) {
+  const res = await writeChanges(changes, creates);
+  updateTag(BOARD_TAG);
+  return res;
+}
+
+async function writeChanges(changes: Change[], creates: NewTask[]) {
   if (changes.length + creates.length > 40) throw new Error("Too many changes at once");
   const cleanChanges = changes.map((c) => {
     if (!ID.test(c.id)) throw new Error("Bad id");
@@ -97,10 +111,48 @@ export async function applyChanges(changes: Change[], creates: NewTask[] = []) {
     if (USE_MOCK) mockUpdate(c.id, c.patch);
     else await updateTaskInNotion(c.id, c.patch);
   }
-
-  // Read-your-own-writes: the next poll from any viewer gets fresh data.
-  updateTag(BOARD_TAG);
   return { ok: true, created };
+}
+
+// ---- Sign in / sign out (the workday, not the website login) -----------------------------
+
+/** Start the day: apply the plan, then open (or reopen) today's row in Mission Control Days. */
+export async function signIn(changes: Change[], creates: NewTask[], order: string[]) {
+  if (order.length > 60 || order.some((id) => !ID.test(id))) throw new Error("Bad plan");
+  const { created } = await writeChanges(changes, creates);
+  const realId = new Map(created.map((c) => [c.tempId, c.id]));
+  const plannedIds = order.map((id) => realId.get(id) ?? id).filter((id) => !id.startsWith("tmp-"));
+
+  const today = todayInZone();
+  const existing = (await getHistory(1)).find((d) => d.date === today);
+  const now = new Date().toISOString();
+  if (existing) {
+    const patch = { signedOut: null, plannedIds, ...(existing.signedIn ? {} : { signedIn: now }) };
+    if (USE_MOCK) mockUpdateDay(existing.id, patch);
+    else await updateDay(existing.id, patch);
+  } else if (USE_MOCK) mockCreateDay(today, now, plannedIds);
+  else await createDay(today, now, plannedIds);
+
+  updateTag(BOARD_TAG);
+  return { ok: true };
+}
+
+/** End the day: save the stats and notes; optionally send unfinished planned work back to the to-do list. */
+export async function signOut(dayId: string, stats: DayStats, notes: string, returnIds: string[]) {
+  if (!ID.test(dayId) || returnIds.some((id) => !ID.test(id))) throw new Error("Bad id");
+  const nums = ["planned", "done", "signalDone", "noiseDone", "plannedDone", "carriedOver", "idleMinutes"] as const;
+  for (const k of nums) if (!Number.isFinite(stats[k]) || stats[k] < 0) throw new Error(`Bad ${k}`);
+  if (stats.doneIds.some((id) => !ID.test(id))) throw new Error("Bad done id");
+  if (typeof notes !== "string" || notes.length > 2000) throw new Error("Bad notes");
+
+  if (returnIds.length) {
+    await writeChanges(returnIds.map((id) => ({ id, patch: { focus: null, focusOrder: null } })), []);
+  }
+  const patch = { ...stats, notes, signedOut: new Date().toISOString() };
+  if (USE_MOCK) mockUpdateDay(dayId, patch);
+  else await updateDay(dayId, patch);
+  updateTag(BOARD_TAG);
+  return { ok: true };
 }
 
 export async function login(_: unknown, form: FormData) {

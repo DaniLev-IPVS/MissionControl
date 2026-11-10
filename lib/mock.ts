@@ -1,8 +1,8 @@
 import "server-only";
-import type { Department, NewTask, Task, TaskPatch } from "./types";
+import type { Day, DayStats, Department, DoneItem, NewTask, Task, TaskPatch, TreeTask } from "./types";
 
 // Fake data for local development without a Notion token.
-type Store = { tasks: Task[]; done: { id: string; name: string }[]; departments: Department[] };
+type Store = { tasks: Task[]; done: DoneItem[]; archive: TreeTask[]; days: Day[]; departments: Department[] };
 
 const g = globalThis as unknown as { __mockStore?: Store };
 
@@ -19,8 +19,21 @@ function seed(): Store {
     id: extra.id ?? `m${++n}`, url: "https://www.notion.so", name, status: "To Start", priority: "P1",
     level: "task", due: null, estMin: null, departmentIds: ["d-ops"], parentId: null, sprintId: "s-cur",
     focus: null, focusOrder: null, noise: false, idleSince: null, idleReminder: null, idleMinutes: 0,
-    idleLog: "", createdAt: now, editedAt: now, ...extra,
+    idleLog: "", doneAt: null, doneAs: null, createdAt: now, editedAt: now, ...extra,
   });
+  const ago = (d: number) => new Date(Date.now() - d * 86400000).toISOString();
+  const fin = (name: string, parentId: string, dept: string, created: number, done: number): TreeTask => ({
+    id: `a${++n}`, name, status: "Done", level: "task", parentId, departmentIds: [dept], due: null,
+    createdAt: ago(created), doneAt: ago(done), url: "https://www.notion.so",
+  });
+  const dayRow = (offset: number, sig: number, noi: number, planned: number, pDone: number): Day => {
+    const d = day(-offset);
+    return {
+      id: `day-${d}`, date: d, signedIn: `${d}T09:0${offset}:00.000Z`, signedOut: `${d}T17:4${offset}:00.000Z`,
+      planned, done: sig + noi, signalDone: sig, noiseDone: noi, plannedDone: pDone, carriedOver: planned - pDone,
+      idleMinutes: 20 + offset * 7, plannedIds: [], notes: offset === 1 ? "Good focus day, bank stuff dragged." : "",
+    };
+  };
   return {
     departments: [
       { id: "d-ops", name: "Studio Ops" },
@@ -28,7 +41,17 @@ function seed(): Store {
       { id: "d-prod", name: "Production" },
       { id: "d-fin", name: "Finance" },
     ],
-    done: [{ id: "x1", name: "Send the weekly update" }],
+    done: [{ id: "x1", name: "Send the weekly update", doneAs: "Noise", focus: null, noise: true }],
+    archive: [
+      fin("Outline the pilot scope", "ms-deal", "d-sales", 20, 12),
+      fin("First call with the client", "ms-deal", "d-sales", 21, 15),
+      fin("Storyboard batch 4", "ms-batch", "d-prod", 14, 6),
+      fin("Record voice-over", "ms-batch", "d-prod", 14, 4),
+      fin("Edit rough cut", "ms-batch", "d-prod", 13, 2),
+      fin("Pick the bank", "ms-bank", "d-fin", 9, 3),
+      fin("Write the job post", "ms-hire", "d-prod", 30, 25),
+    ],
+    days: [dayRow(1, 6, 2, 8, 5), dayRow(2, 4, 4, 7, 4), dayRow(3, 7, 1, 8, 7), dayRow(4, 3, 3, 6, 3), dayRow(5, 5, 2, 7, 5)],
     tasks: [
       // Projects
       t("Sales", { id: "p-sales", level: "project", departmentIds: ["d-sales"], status: "Working on it", priority: "P0" }),
@@ -71,7 +94,9 @@ export function mockUpdate(id: string, patch: TaskPatch) {
   Object.assign(task, patch, { editedAt: new Date().toISOString() });
   if (task.status === "Done" || task.status === "Cancelled") {
     s.tasks = s.tasks.filter((t) => t.id !== id);
-    if (task.status === "Done") s.done.unshift({ id: task.id, name: task.name });
+    s.archive.push({ ...task, doneAt: task.doneAt ?? new Date().toISOString() });
+    if (task.status === "Done")
+      s.done.unshift({ id: task.id, name: task.name, doneAs: task.doneAs, focus: task.focus, noise: task.noise });
   }
 }
 
@@ -83,7 +108,40 @@ export function mockCreate(t: NewTask): string {
     level: t.level, due: t.due ?? null, estMin: null, departmentIds: t.departmentIds ?? [],
     parentId: t.parentId ?? null, sprintId: "s-cur", focus: t.focus ?? null, focusOrder: t.focusOrder ?? null,
     noise: t.noise ?? false, idleSince: null, idleReminder: null, idleMinutes: 0, idleLog: "",
-    createdAt: now, editedAt: now,
+    doneAt: null, doneAs: null, createdAt: now, editedAt: now,
   });
   return id;
+}
+
+export function mockTree(): TreeTask[] {
+  const s = mockStore();
+  return [
+    ...s.tasks.map((t) => ({
+      id: t.id, name: t.name, status: t.status, level: t.level, parentId: t.parentId, departmentIds: t.departmentIds,
+      due: t.due, createdAt: new Date(Date.now() - 10 * 86400000).toISOString(), doneAt: null, url: t.url,
+    })),
+    ...s.archive,
+  ];
+}
+
+export function mockCreateDay(date: string, signedIn: string, plannedIds: string[]) {
+  const d: Day = {
+    id: `day-${date}`, date, signedIn, signedOut: null, planned: plannedIds.length, done: 0, signalDone: 0,
+    noiseDone: 0, plannedDone: 0, carriedOver: 0, idleMinutes: 0, plannedIds, notes: "",
+  };
+  const s = mockStore();
+  s.days = [d, ...s.days.filter((x) => x.date !== date)];
+  return d.id;
+}
+
+export function mockUpdateDay(
+  id: string,
+  patch: Partial<DayStats> & { signedIn?: string | null; signedOut?: string | null; notes?: string; plannedIds?: string[] },
+) {
+  const d = mockStore().days.find((x) => x.id === id);
+  if (!d) throw new Error("Day not found");
+  const { doneIds, ...rest } = patch;
+  void doneIds;
+  Object.assign(d, rest);
+  if (patch.plannedIds) d.planned = patch.plannedIds.length;
 }

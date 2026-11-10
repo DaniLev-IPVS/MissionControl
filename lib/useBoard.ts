@@ -4,7 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { applyChanges } from "@/app/actions";
 import { applyLocal, draftTask, type Plan } from "./flow";
-import type { Board, Task, TaskPatch } from "./types";
+import type { Board, Change, NewTask, Task, TaskPatch } from "./types";
+
+/** Saves a plan. Defaults to applyChanges; sign in / sign out pass their own action. */
+export type Runner = (changes: Change[], creates: NewTask[]) => Promise<unknown>;
 
 // Live sync between the browser and Notion. UI-agnostic.
 //
@@ -83,8 +86,8 @@ export function useBoard() {
   }, [poll]);
 
   const apply = useCallback(
-    async ({ changes, creates }: Plan) => {
-      if (!changes.length && !creates.length) return;
+    async ({ changes, creates }: Plan, run: Runner = applyChanges): Promise<boolean> => {
+      if (!changes.length && !creates.length && run === applyChanges) return true;
       const ids = changes.map((c) => c.id);
       const tempIds = creates.map((c) => c.tempId);
       setPending((prev) => {
@@ -107,11 +110,12 @@ export function useBoard() {
         return next;
       };
       try {
-        await applyChanges(changes, creates);
+        await run(changes, creates);
         setPending(markDone(ids));
         setTemps(markDone(tempIds));
         setSaveError(null);
         poll();
+        return true;
       } catch {
         const drop = <T,>(keys: string[]) => (prev: Map<string, T>) => {
           const next = new Map(prev);
@@ -121,6 +125,7 @@ export function useBoard() {
         setPending(drop(ids));
         setTemps(drop(tempIds));
         setSaveError("Couldn't save to Notion. Your last change was undone.");
+        return false;
       } finally {
         setInFlight((n) => n - 1);
       }

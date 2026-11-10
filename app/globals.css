@@ -19,6 +19,9 @@
 
   --color-signal: #5b87ff;
   --color-noise: #e89558;
+  /* Chart marks (validated pair on the dark surface: CVD ΔE 27, L in band). */
+  --color-chart-signal: #5b87ff;
+  --color-chart-noise: #d27a42;
 
   --color-level-project: #b18cff;
   --color-level-mission: #5b9dff;

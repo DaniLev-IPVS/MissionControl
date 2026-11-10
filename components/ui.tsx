@@ -6,13 +6,14 @@ import { LEVEL_LABELS, type Level } from "@/lib/config";
 import { addDays, type Plan } from "@/lib/flow";
 import { formatElapsed, useNow } from "@/lib/hooks";
 import type { Board, Task } from "@/lib/types";
+import type { Runner } from "@/lib/useBoard";
 
 // ---- Shared context -------------------------------------------------------------------
 export type MC = {
   board: Board;
   tasks: Task[];
   today: string;
-  apply: (plan: Plan) => void;
+  apply: (plan: Plan, run?: Runner) => Promise<boolean>;
   openDetails: (id: string) => void;
   deptName: (id: string) => string;
   taskById: (id: string) => Task | undefined;

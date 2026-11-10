@@ -2,6 +2,7 @@ import "server-only";
 import { Client, isFullPage } from "@notionhq/client";
 import type { PageObjectResponse } from "@notionhq/client";
 import {
+  DAYS_DATA_SOURCE_ID,
   DEFAULT_ASSIGNEE_ID,
   DEPARTMENTS_DATA_SOURCE_ID,
   FOCUS_NOTION,
@@ -11,7 +12,7 @@ import {
   levelFromNotion,
   levelToNotion,
 } from "./config";
-import type { Department, NewTask, Task, TaskPatch } from "./types";
+import type { Day, DayStats, Department, DoneItem, NewTask, Task, TaskPatch, TreeTask } from "./types";
 
 let client: Client | null = null;
 function notion() {
@@ -88,6 +89,8 @@ function toTask(p: PageObjectResponse, oldNames: boolean): Task {
     idleReminder: date(pr["Idle Reminder"]),
     idleMinutes: num(pr["Idle Minutes"]) ?? 0,
     idleLog: plain(pr["Idle Log"]),
+    doneAt: date(pr["Done At"]),
+    doneAs: (select(pr["Done As"]) as Task["doneAs"]) ?? null,
     createdAt: p.created_time,
     editedAt: p.last_edited_time,
   };
@@ -118,7 +121,93 @@ export async function fetchDoneSince(sinceISO: string) {
     50,
     50,
   );
-  return pages.map((p) => ({ id: p.id, name: plain(p.properties["Name"]) || "Untitled" }));
+  return pages.map(
+    (p): DoneItem => ({
+      id: p.id,
+      name: plain(p.properties["Name"]) || "Untitled",
+      doneAs: (select(p.properties["Done As"]) as DoneItem["doneAs"]) ?? null,
+      focus: focusFromNotion(select(p.properties["Focus"])),
+      noise: check(p.properties["Noise"]),
+    }),
+  );
+}
+
+/** Every ticket, finished ones included, for progress and the timeline. */
+export async function fetchAllTasks(): Promise<TreeTask[]> {
+  const [pages, oldNames] = await Promise.all([queryAll(TASKS_DATA_SOURCE_ID), levelsUseOldNames()]);
+  return pages.map((p) => {
+    const t = toTask(p, oldNames);
+    const finished = t.status === "Done" || t.status === "Cancelled";
+    return {
+      id: t.id, name: t.name, status: t.status, level: t.level, parentId: t.parentId, departmentIds: t.departmentIds,
+      due: t.due, createdAt: t.createdAt, url: t.url, doneAt: t.doneAt ?? (finished ? t.editedAt : null),
+    };
+  });
+}
+
+// ---- Day log (Mission Control Days) ---------------------------------------------
+function toDay(p: PageObjectResponse): Day {
+  const pr = p.properties;
+  return {
+    id: p.id,
+    date: (date(pr["Date"]) ?? "").slice(0, 10),
+    signedIn: date(pr["Signed In"]),
+    signedOut: date(pr["Signed Out"]),
+    planned: num(pr["Planned"]) ?? 0,
+    done: num(pr["Done"]) ?? 0,
+    signalDone: num(pr["Signal Done"]) ?? 0,
+    noiseDone: num(pr["Noise Done"]) ?? 0,
+    plannedDone: num(pr["Planned Done"]) ?? 0,
+    carriedOver: num(pr["Carried Over"]) ?? 0,
+    idleMinutes: num(pr["Idle Minutes"]) ?? 0,
+    plannedIds: relation(pr["Planned Tasks"]),
+    notes: plain(pr["Notes"]),
+  };
+}
+
+export async function fetchDays(sinceDay: string): Promise<Day[]> {
+  const pages = await queryAll(DAYS_DATA_SOURCE_ID, { property: "Date", date: { on_or_after: sinceDay } });
+  return pages.map(toDay).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+const rel = (ids: string[]) => ({ relation: ids.slice(0, 100).map((id) => ({ id })) });
+
+export async function createDay(day: string, signedIn: string, plannedIds: string[]): Promise<string> {
+  const label = new Date(`${day}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  const page = await notion().pages.create({
+    parent: { type: "data_source_id", data_source_id: DAYS_DATA_SOURCE_ID },
+    properties: {
+      Day: { title: richText(label) },
+      Date: { date: { start: day } },
+      "Signed In": { date: { start: signedIn } },
+      Planned: { number: plannedIds.length },
+      "Planned Tasks": rel(plannedIds),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any,
+  });
+  return page.id;
+}
+
+export async function updateDay(
+  id: string,
+  patch: Partial<DayStats> & { signedIn?: string | null; signedOut?: string | null; notes?: string; plannedIds?: string[] },
+) {
+  const p: Record<string, unknown> = {};
+  if (patch.signedIn !== undefined) p["Signed In"] = { date: patch.signedIn ? { start: patch.signedIn } : null };
+  if (patch.signedOut !== undefined) p["Signed Out"] = { date: patch.signedOut ? { start: patch.signedOut } : null };
+  if (patch.notes !== undefined) p["Notes"] = { rich_text: richText(patch.notes) };
+  if (patch.plannedIds !== undefined) {
+    p["Planned Tasks"] = rel(patch.plannedIds);
+    p["Planned"] = { number: patch.plannedIds.length };
+  }
+  const nums: [keyof DayStats, string][] = [
+    ["done", "Done"], ["signalDone", "Signal Done"], ["noiseDone", "Noise Done"], ["plannedDone", "Planned Done"],
+    ["carriedOver", "Carried Over"], ["idleMinutes", "Idle Minutes"],
+  ];
+  for (const [k, name] of nums) if (patch[k] !== undefined) p[name] = { number: patch[k] };
+  if (patch.doneIds !== undefined) p["Done Tasks"] = rel(patch.doneIds);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await notion().pages.update({ page_id: id, properties: p as any });
 }
 
 export async function fetchDepartments(): Promise<Department[]> {
@@ -159,6 +248,8 @@ function patchToProperties(patch: TaskPatch) {
     p["Idle Reminder"] = { date: patch.idleReminder ? { start: patch.idleReminder } : null };
   if (patch.idleMinutes !== undefined) p["Idle Minutes"] = { number: patch.idleMinutes };
   if (patch.idleLog !== undefined) p["Idle Log"] = { rich_text: richText(patch.idleLog) };
+  if (patch.doneAt !== undefined) p["Done At"] = { date: patch.doneAt ? { start: patch.doneAt } : null };
+  if (patch.doneAs !== undefined) p["Done As"] = { select: patch.doneAs ? { name: patch.doneAs } : null };
   return p;
 }
 
