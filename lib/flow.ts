@@ -163,6 +163,12 @@ export function blocked(tasks: Task[], task: Task, today: string): Plan {
   ]);
 }
 
+/** Blocked from any card: planned work drops to the end of Today; unplanned work keeps its place. */
+export function markBlocked(tasks: Task[], task: Task, today: string): Plan {
+  if (task.focus) return blocked(tasks, task, today);
+  return finish(tasks, today, [{ id: task.id, patch: { status: "Blocked" } }]);
+}
+
 export function idle(tasks: Task[], task: Task, today: string, remindInMin: number | null, now = new Date()): Plan {
   const s = sections(tasks, today);
   return finish(tasks, today, [

@@ -40,6 +40,8 @@ export const PRIORITIES = ["P0", "P1", "P2"] as const;
 
 export const isBlockedStatus = (s: string | null) =>
   (STATUS_GROUPS.blocked as readonly string[]).includes(s ?? "");
+export const isDoneStatus = (s: string | null) =>
+  (STATUS_GROUPS.done as readonly string[]).includes(s ?? "");
 export const isTodoStatus = (s: string | null) =>
   !s || (STATUS_GROUPS.todo as readonly string[]).includes(s);
 

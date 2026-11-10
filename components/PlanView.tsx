@@ -35,7 +35,17 @@ const SLOT_STYLE = {
 
 type ChatMsg = { role: "user" | "assistant"; content: string };
 
-export function PlanView({ planning, onDone }: { planning: boolean; onDone: () => void }) {
+type Visible = (t: Pick<Task, "status" | "departmentIds" | "level">) => boolean;
+
+export function PlanView({
+  planning,
+  onDone,
+  visible = () => true,
+}: {
+  planning: boolean;
+  onDone: () => void;
+  visible?: Visible;
+}) {
   const { tasks, today, board, apply, deptName, openDetails } = useMC();
   const [draft, setDraft] = useState<string[]>(() => currentOrder(tasks, today));
   const [drafts, setDrafts] = useState<NewTask[]>([]); // new tasks proposed by the AI
@@ -75,8 +85,9 @@ export function PlanView({ planning, onDone }: { planning: boolean; onDone: () =
     return { depts, children: (id: string) => sort(children.get(id) ?? []) };
   }, [tasks, deptName]);
 
+  // Shown if it passes the shared filters and the search, or if something under it does.
   const matches = (t: Task): boolean =>
-    !query || t.name.toLowerCase().includes(query.toLowerCase()) || tree.children(t.id).some(matches);
+    (visible(t) && (!query || t.name.toLowerCase().includes(query.toLowerCase()))) || tree.children(t.id).some(matches);
 
   // ---- Draft editing ------------------------------------------------------------------
   const toggle = (id: string) =>

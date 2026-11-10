@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, ChevronRight } from "lucide-react";
 import { LEVEL_LABELS } from "@/lib/config";
 import { addDays } from "@/lib/flow";
+import type { Level } from "@/lib/config";
 import type { TreeTask } from "@/lib/types";
 import { cx, deptHue, useMC } from "./ui";
 
@@ -26,11 +27,21 @@ type Node = {
 const isFinished = (t: TreeTask) => t.status === "Done" || t.status === "Cancelled";
 const DAY_MS = 86400000;
 
-export function TimelineView() {
+export function TimelineView({
+  inDept = () => true,
+  hideDone = true,
+  level = "all",
+  query = "",
+}: {
+  inDept?: (departmentIds: string[]) => boolean;
+  hideDone?: boolean;
+  level?: "all" | Level;
+  query?: string;
+}) {
   const { deptName, today } = useMC();
   const [all, setAll] = useState<TreeTask[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [hideFinished, setHideFinished] = useState(true);
+  const hideFinished = hideDone;
   const [open, setOpen] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -98,11 +109,20 @@ export function TimelineView() {
     };
 
     // Top rows: projects, plus missions that don't belong to a project.
-    const roots = all.filter((t) => t.level === "project" || (t.level === "mission" && !(t.parentId && ids.has(t.parentId))));
+    // With the level filter on Missions, every mission gets its own row.
+    const roots = all.filter((t) =>
+      level === "mission"
+        ? t.level === "mission"
+        : t.level === "project" || (t.level === "mission" && !(t.parentId && ids.has(t.parentId))),
+    );
+    const q = query.trim().toLowerCase();
+    const hit = (n: Node): boolean => n.task.name.toLowerCase().includes(q) || n.children.some(hit);
     const byDept = new Map<string, Node[]>();
     for (const r of roots) {
       const n = build(r);
       if (hideFinished && n.finished) continue;
+      if (!inDept(r.departmentIds)) continue;
+      if (q && !hit(n)) continue;
       const key = r.departmentIds[0] ?? "";
       byDept.set(key, [...(byDept.get(key) ?? []), n]);
     }
@@ -113,7 +133,7 @@ export function TimelineView() {
         nodes: nodes.sort((a, b) => Number(a.finished) - Number(b.finished) || a.start.localeCompare(b.start)),
       }))
       .sort((a, b) => (a.id ? 0 : 1) - (b.id ? 0 : 1) || a.name.localeCompare(b.name));
-  }, [all, hideFinished, deptName, today]);
+  }, [all, hideFinished, deptName, today, level, query, inDept]);
 
   // Time range: snap to weeks, cap at ~4 months back.
   const range = useMemo(() => {
@@ -146,10 +166,6 @@ export function TimelineView() {
           <h2 className="text-sm font-bold uppercase tracking-[0.12em] text-ink-2">Projects timeline</h2>
           <p className="mt-1 text-xs text-ink-3">Bars run from first created to latest due date. Fill = share of tasks done. Open a project to see its missions.</p>
         </div>
-        <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-ink-2">
-          <input type="checkbox" checked={hideFinished} onChange={(e) => setHideFinished(e.target.checked)} className="size-4 accent-[#1856ff]" />
-          Hide finished
-        </label>
       </div>
 
       <div className="scroll-thin overflow-x-auto">

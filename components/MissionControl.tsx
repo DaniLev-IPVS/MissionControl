@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlarmClock,
+  CheckCheck,
   Layers,
   LogOut,
   ListTodo,
@@ -16,7 +17,7 @@ import {
   Waves,
   Zap,
 } from "lucide-react";
-import { DASHBOARD_SLOTS, LEVELS, LEVEL_LABELS, TODAY_TARGET, type Level } from "@/lib/config";
+import { DASHBOARD_SLOTS, LEVELS, LEVEL_LABELS, TODAY_TARGET, isDoneStatus, type Level } from "@/lib/config";
 import { localDay, lowestLevel, makeMain, moveTo, sections, snooze, type Lane } from "@/lib/flow";
 import { useNow, useReminders } from "@/lib/hooks";
 import type { Task } from "@/lib/types";
@@ -51,6 +52,7 @@ export default function MissionControl() {
   const [level, setLevel] = useState<"all" | Level>("all");
   const [type, setType] = useState<TypeFilter>("all");
   const [lowest, setLowest] = useState(false);
+  const [hideDone, setHideDone] = useState(true); // on by default; can be switched off
   const [sort, setSort] = useState<SortKey>("flow");
   const [query, setQuery] = useState("");
   const [dragId, setDragId] = useState<string | null>(null);
@@ -109,13 +111,23 @@ export default function MissionControl() {
 
   const visible = useCallback(
     (t: Task) => {
+      if (hideDone && isDoneStatus(t.status)) return false;
       if (depts.size && !t.departmentIds.some((d) => depts.has(d))) return false;
       if (level !== "all" && t.level !== level) return false;
       if (lowest && !lowestIds.has(t.id)) return false;
       if (query && !t.name.toLowerCase().includes(query.toLowerCase())) return false;
       return true;
     },
-    [depts, level, lowest, lowestIds, query],
+    [hideDone, depts, level, lowest, lowestIds, query],
+  );
+  const inDept = useCallback((ids: string[]) => !depts.size || ids.some((d) => depts.has(d)), [depts]);
+  // Plan and Timeline share department, level and done filters (not lane-only ones).
+  const treeVisible = useCallback(
+    (t: { status: string | null; departmentIds: string[]; level: Level | null }) =>
+      !(hideDone && isDoneStatus(t.status)) &&
+      !(depts.size && !t.departmentIds.some((d) => depts.has(d))) &&
+      !(level !== "all" && t.level !== level),
+    [hideDone, depts, level],
   );
 
   const sorted = useCallback(
@@ -162,8 +174,10 @@ export default function MissionControl() {
     );
   }
 
+  const isFocus = view === "focus";
   const activeFilters =
-    Number(type !== "all") + Number(level !== "all") + Number(lowest) + Number(sort !== "flow") + Number(!!query) + depts.size;
+    Number(type !== "all") + Number(level !== "all") + Number(lowest) + Number(sort !== "flow") + Number(!!query) + depts.size +
+    Number(!hideDone);
   const signalCount = (s.main ? 1 : 0) + s.dashboard.length + s.today.length;
   const noiseCount = s.noise.length;
   const showSignal = type !== "noise";
@@ -283,20 +297,7 @@ export default function MissionControl() {
           )}
         </nav>
 
-        {view === "plan" && (
-          <PlanView
-            key={planning ? "signin" : "plan"}
-            planning={planning}
-            onDone={() => {
-              setPlanning(false);
-              setView("focus");
-            }}
-          />
-        )}
-        {view === "timeline" && <TimelineView />}
-        {view === "days" && <DaysView />}
-
-        {view === "focus" && (
+        {view !== "days" && (
         <>
         {/* ---- Filters (folded behind a button on phones) ---- */}
         <button
@@ -310,6 +311,7 @@ export default function MissionControl() {
           )}
         </button>
         <div className={cx("flex-wrap items-center gap-2.5 rounded-3xl p-2.5 glass", filtersOpen ? "flex" : "hidden md:flex")}>
+          {isFocus && (
           <Segmented
             label="Signal or noise"
             value={type}
@@ -320,12 +322,28 @@ export default function MissionControl() {
               { value: "noise", label: "Noise", dot: "#e89558" },
             ]}
           />
+          )}
           <Segmented
             label="Task level"
             value={level}
             onChange={setLevel}
             options={[{ value: "all" as const, label: "All levels" }, ...LEVELS.map((l) => ({ value: l, label: `${LEVEL_LABELS[l]}s` }))]}
           />
+          {view !== "plan" && (
+            <button
+              onClick={() => setHideDone((v) => !v)}
+              aria-pressed={hideDone}
+              className={cx(
+                "inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold transition-colors",
+                hideDone ? "bg-primary/25 text-primary-hi ring-1 ring-primary/50" : "text-ink-3 glass-chip hover:text-ink",
+              )}
+              title={hideDone ? "Done tasks are hidden. Click to show them." : "Showing done tasks. Click to hide them."}
+            >
+              <CheckCheck className="size-3.5" /> Hide done
+            </button>
+          )}
+          {isFocus && (
+          <>
           <button
             onClick={() => setLowest((v) => !v)}
             aria-pressed={lowest}
@@ -350,6 +368,9 @@ export default function MissionControl() {
               <option value="level">Level</option>
             </select>
           </label>
+          </>
+          )}
+          {view !== "plan" && (
           <div className="relative ml-auto min-w-[180px] flex-1 sm:max-w-[260px]">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-3" />
             <input
@@ -360,6 +381,7 @@ export default function MissionControl() {
               className="h-9 w-full rounded-full bg-white/5 pl-9 pr-3 text-sm text-ink placeholder:text-ink-3 ring-1 ring-white/10"
             />
           </div>
+          )}
           {usedDepts.length > 0 && (
             <div className="flex w-full flex-wrap gap-1.5 border-t border-white/8 pt-2.5" role="group" aria-label="Departments">
               <DeptToggle active={!depts.size} onClick={() => setDepts(new Set())} label="All departments" />
@@ -384,6 +406,25 @@ export default function MissionControl() {
           )}
         </div>
 
+        </>
+        )}
+
+        {view === "plan" && (
+          <PlanView
+            key={planning ? "signin" : "plan"}
+            planning={planning}
+            visible={treeVisible}
+            onDone={() => {
+              setPlanning(false);
+              setView("focus");
+            }}
+          />
+        )}
+        {view === "timeline" && <TimelineView inDept={inDept} hideDone={hideDone} level={level} query={query} />}
+        {view === "days" && <DaysView />}
+
+        {view === "focus" && (
+        <>
         {/* ---- Board ---- */}
         <div className="grid gap-5 xl:grid-cols-12">
           <div className="space-y-5 xl:col-span-8">
@@ -463,6 +504,34 @@ export default function MissionControl() {
                   ))}
                 </div>
               </LaneSection>
+            )}
+
+            {!hideDone && (
+              <section aria-label="Done today" className="rounded-[26px] p-4 glass sm:p-5">
+                <header className="mb-3 flex items-center gap-2">
+                  <CheckCheck className="size-4 text-success" />
+                  <h2 className="text-sm font-bold uppercase tracking-[0.12em] text-ink-2">Done today</h2>
+                  <span className="ml-auto font-mono text-xs text-ink-3">{board!.doneToday.length}</span>
+                </header>
+                {board!.doneToday.length === 0 ? (
+                  <p className="text-sm text-ink-3">Nothing finished yet today.</p>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {board!.doneToday
+                      .filter((d) => !query || d.name.toLowerCase().includes(query.toLowerCase()))
+                      .map((d) => {
+                        const signal = d.doneAs ? d.doneAs === "Signal" : !!d.focus && !d.noise;
+                        return (
+                          <li key={d.id} className="flex items-center gap-2 rounded-xl px-2.5 py-2 text-sm glass-chip">
+                            <span className={cx("size-2 shrink-0 rounded-full", signal ? "bg-chart-signal" : "bg-chart-noise")} />
+                            <span className="min-w-0 flex-1 truncate text-ink-2 line-through decoration-ink-3/60">{d.name}</span>
+                            <span className="text-[11px] font-semibold text-ink-3">{signal ? "Signal" : "Noise"}</span>
+                          </li>
+                        );
+                      })}
+                  </ul>
+                )}
+              </section>
             )}
 
             {showBacklog && (

@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, CornerDownRight, GripVertical, Info, Play, Undo2 } from "lucide-react";
+import { Ban, Check, ChevronDown, CornerDownRight, GripVertical, Info, Play, Undo2 } from "lucide-react";
 import { LEVEL_LABELS } from "@/lib/config";
-import { isBlocked, laneOf, makeMain, moveTo, unblock, type Lane } from "@/lib/flow";
+import { done, isBlocked, laneOf, makeMain, markBlocked, moveTo, unblock, type Lane } from "@/lib/flow";
 import type { Task } from "@/lib/types";
 import { DeptChip, DueBadge, IdleTimer, LevelBadge, PriorityPill, cx, useMC } from "./ui";
 
@@ -91,16 +91,24 @@ export function TaskCard({
         </div>
       </div>
 
-      <div className="mt-2.5 flex items-center justify-end gap-1">
+      <div className="mt-2.5 flex flex-wrap items-center justify-end gap-1">
         {isBlocked(task) ? (
           <CardButton onClick={() => apply(unblock(tasks, task, today))} label="Unblock">
             <Undo2 className="size-3.5" /> Unblock
           </CardButton>
         ) : (
-          <CardButton onClick={() => apply(makeMain(tasks, task, today))} label={`Start "${task.name}" now`} primary>
-            <Play className="size-3.5" /> {task.idleSince ? "Resume" : "Start"}
-          </CardButton>
+          <>
+            <CardButton onClick={() => apply(makeMain(tasks, task, today))} label={`Start "${task.name}" now`} primary>
+              <Play className="size-3.5" /> {task.idleSince ? "Resume" : "Start"}
+            </CardButton>
+            <CardButton onClick={() => apply(markBlocked(tasks, task, today))} label={`Mark "${task.name}" blocked`} tone="danger">
+              <Ban className="size-3.5" /> Blocked
+            </CardButton>
+          </>
         )}
+        <CardButton onClick={() => apply(done(tasks, task, today))} label={`Mark "${task.name}" done`} tone="success">
+          <Check className="size-3.5" /> Done
+        </CardButton>
         <MoveMenu task={task} current={lane} />
         <CardButton onClick={() => openDetails(task.id)} label="Open details">
           <Info className="size-3.5" />
@@ -115,11 +123,13 @@ function CardButton({
   onClick,
   label,
   primary = false,
+  tone,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   label: string;
   primary?: boolean;
+  tone?: "success" | "danger";
 }) {
   return (
     <button
@@ -128,7 +138,13 @@ function CardButton({
       title={label}
       className={cx(
         "inline-flex h-8 items-center gap-1 rounded-full px-2.5 text-xs font-semibold transition-colors",
-        primary ? "bg-primary/20 text-primary-hi hover:bg-primary/35" : "text-ink-3 hover:bg-white/10 hover:text-ink",
+        primary
+          ? "bg-primary/20 text-primary-hi hover:bg-primary/35"
+          : tone === "success"
+            ? "text-success hover:bg-success/15"
+            : tone === "danger"
+              ? "text-danger-hi hover:bg-danger/15"
+              : "text-ink-3 hover:bg-white/10 hover:text-ink",
       )}
     >
       {children}
