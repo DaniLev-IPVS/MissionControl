@@ -329,7 +329,7 @@ export default function MissionControl() {
             onChange={setLevel}
             options={[{ value: "all" as const, label: "All levels" }, ...LEVELS.map((l) => ({ value: l, label: `${LEVEL_LABELS[l]}s` }))]}
           />
-          {view !== "plan" && (
+          {(
             <button
               onClick={() => setHideDone((v) => !v)}
               aria-pressed={hideDone}
@@ -414,6 +414,7 @@ export default function MissionControl() {
             key={planning ? "signin" : "plan"}
             planning={planning}
             visible={treeVisible}
+            showDone={!hideDone}
             onDone={() => {
               setPlanning(false);
               setView("focus");

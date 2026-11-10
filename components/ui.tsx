@@ -125,6 +125,15 @@ export function IdleTimer({ task, large = false }: { task: Task; large?: boolean
 }
 
 // ---- Modal ---------------------------------------------------------------------------------------
+/** A ref that always holds the latest value, for effects that should run once. */
+export function useLatest<T>(value: T) {
+  const ref = useRef(value);
+  useEffect(() => {
+    ref.current = value;
+  });
+  return ref;
+}
+
 export function Modal({
   title,
   onClose,
@@ -137,19 +146,22 @@ export function Modal({
   wide?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const close = useLatest(onClose);
+  // Focus once when it opens. (Re-running on every render would steal focus from
+  // whatever you're typing in each time the board refreshes.)
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
     const first =
       ref.current?.querySelector<HTMLElement>("[data-autofocus]") ??
       ref.current?.querySelector<HTMLElement>("input, textarea, button");
     first?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close.current();
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
       prev?.focus?.();
     };
-  }, [onClose]);
+  }, [close]);
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/55 p-4 backdrop-blur-md sm:items-center" onMouseDown={onClose}>
       <div

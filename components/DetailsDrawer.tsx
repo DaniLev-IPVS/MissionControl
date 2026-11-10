@@ -2,14 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ExternalLink, X } from "lucide-react";
-import { ALL_STATUSES, LEVEL_LABELS, PRIORITIES } from "@/lib/config";
-import { laneOf } from "@/lib/flow";
+import { LEVEL_LABELS, PRIORITIES, STATUS_GROUPS } from "@/lib/config";
+import { done, laneOf } from "@/lib/flow";
 import type { Task, TaskPatch } from "@/lib/types";
 import { LANE_LABELS } from "./TaskCard";
-import { DeptChip, IdleTimer, LevelBadge, useMC } from "./ui";
+import { DeptChip, IdleTimer, LevelBadge, cx, useLatest, useMC } from "./ui";
 
 export function DetailsDrawer({ task, onClose }: { task: Task; onClose: () => void }) {
-  const { apply, taskById, titleOf, deptName, today } = useMC();
+  const { apply, tasks, taskById, titleOf, deptName, today } = useMC();
   const ref = useRef<HTMLDivElement>(null);
   const [name, setName] = useState(task.name);
   const [editedFor, setEditedFor] = useState(task.id);
@@ -18,12 +18,14 @@ export function DetailsDrawer({ task, onClose }: { task: Task; onClose: () => vo
     setName(task.name);
   }
 
+  const close = useLatest(onClose);
+  // Focus once on open; the board refreshes every 2s and must not pull focus out of a field.
   useEffect(() => {
     ref.current?.focus();
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && close.current();
     window.addEventListener("keydown", esc);
     return () => window.removeEventListener("keydown", esc);
-  }, [onClose]);
+  }, [close]);
 
   const save = (patch: TaskPatch) => apply({ changes: [{ id: task.id, patch }], creates: [] });
 
@@ -81,9 +83,13 @@ export function DetailsDrawer({ task, onClose }: { task: Task; onClose: () => vo
         )}
 
         <dl className="grid grid-cols-[110px_1fr] items-center gap-x-3 gap-y-3 text-sm">
-          <dt className="text-ink-3">Status</dt>
+          <dt className="self-start pt-1.5 text-ink-3">Status</dt>
           <dd>
-            <Select value={task.status ?? ""} onChange={(v) => save({ status: v })} options={ALL_STATUSES} label="Status" />
+            <StatusPicker
+              task={task}
+              // Done goes through the same action as the Done buttons, so it counts as Signal or Noise.
+              onPick={(v) => v !== task.status && (v === "Done" ? apply(done(tasks, task, today)) : save({ status: v }))}
+            />
           </dd>
           <dt className="text-ink-3">Priority</dt>
           <dd>
@@ -159,6 +165,56 @@ export function DetailsDrawer({ task, onClose }: { task: Task; onClose: () => vo
           </a>
         )}
       </aside>
+    </div>
+  );
+}
+
+// Shared boards (Influity) have no "Under Review" / "Fulfilled": they'd come back as In Progress.
+const SHARED_ONLY_MISSING = new Set(["Under Review", "Fulfilled"]);
+const GROUP_LABEL: Record<keyof typeof STATUS_GROUPS, string> = {
+  todo: "To do",
+  blocked: "Blocked",
+  doing: "Doing",
+  done: "Done",
+};
+const GROUP_TONE: Record<keyof typeof STATUS_GROUPS, string> = {
+  todo: "bg-white/15 text-ink ring-white/30",
+  blocked: "bg-danger/20 text-danger-hi ring-danger/50",
+  doing: "bg-primary/25 text-primary-hi ring-primary/50",
+  done: "bg-success/20 text-success ring-success/50",
+};
+
+/** Every status as a chip, grouped by stage: one click, nothing to open or close. */
+function StatusPicker({ task, onPick }: { task: Task; onPick: (status: string) => void }) {
+  const shared = task.board && task.board !== "personal";
+  return (
+    <div role="radiogroup" aria-label="Status" className="space-y-1.5">
+      {(Object.keys(STATUS_GROUPS) as (keyof typeof STATUS_GROUPS)[]).map((g) => (
+        <div key={g} className="flex items-start gap-1.5">
+          <span className="w-14 shrink-0 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-3">{GROUP_LABEL[g]}</span>
+          <div className="flex flex-1 flex-wrap gap-1">
+          {STATUS_GROUPS[g]
+            .filter((st) => !(shared && SHARED_ONLY_MISSING.has(st)))
+            .map((st) => {
+              const on = task.status === st;
+              return (
+                <button
+                  key={st}
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => onPick(st)}
+                  className={cx(
+                    "h-7 rounded-full px-2.5 text-xs font-semibold transition-colors",
+                    on ? cx("ring-1", GROUP_TONE[g]) : "text-ink-2 glass-chip hover:bg-white/12 hover:text-ink",
+                  )}
+                >
+                  {st}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

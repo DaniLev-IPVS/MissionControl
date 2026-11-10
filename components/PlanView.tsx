@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -17,10 +17,10 @@ import {
   X,
 } from "lucide-react";
 import { signIn } from "@/app/actions";
-import { DASHBOARD_SLOTS, LEVEL_LABELS, TODAY_TARGET } from "@/lib/config";
+import { DASHBOARD_SLOTS, LEVEL_LABELS, TODAY_TARGET, isDoneStatus } from "@/lib/config";
 import { commitPlan, currentOrder, draftTask, isBlocked, slotFor } from "@/lib/flow";
 import { useDictation } from "@/lib/hooks";
-import type { NewTask, Task } from "@/lib/types";
+import type { NewTask, Task, TreeTask } from "@/lib/types";
 import { DueBadge, PriorityPill, cx, deptHue, useMC } from "./ui";
 
 const MAX_PLAN = 1 + DASHBOARD_SLOTS + TODAY_TARGET.max;
@@ -41,10 +41,12 @@ export function PlanView({
   planning,
   onDone,
   visible = () => true,
+  showDone = false,
 }: {
   planning: boolean;
   onDone: () => void;
   visible?: Visible;
+  showDone?: boolean;
 }) {
   const { tasks, today, board, apply, deptName, openDetails } = useMC();
   const [draft, setDraft] = useState<string[]>(() => currentOrder(tasks, today));
@@ -62,7 +64,27 @@ export function PlanView({
   const inPlan = useMemo(() => new Map(draft.map((id, i) => [id, i])), [draft]);
 
   // ---- Tree: Department > Project > Mission > Task --------------------------------------
+  // Finished tasks only come in when "Hide done" is off (read-only rows).
+  const [finished, setFinished] = useState<Task[]>([]);
+  useEffect(() => {
+    if (!showDone) return;
+    let alive = true;
+    fetch("/api/tree", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d: { tasks?: TreeTask[] }) => alive && setFinished((d.tasks ?? []).filter((t) => isDoneStatus(t.status)).map(fromTree)))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [showDone]);
+  const treeTasks = useMemo(() => {
+    if (!showDone) return tasks;
+    const open = new Set(tasks.map((t) => t.id));
+    return [...tasks, ...finished.filter((t) => !open.has(t.id))];
+  }, [tasks, finished, showDone]);
+
   const tree = useMemo(() => {
+    const tasks = treeTasks;
     const children = new Map<string, Task[]>();
     const ids = new Set(tasks.map((t) => t.id));
     for (const t of tasks) if (t.parentId && ids.has(t.parentId)) children.set(t.parentId, [...(children.get(t.parentId) ?? []), t]);
@@ -83,7 +105,7 @@ export function PlanView({
       .map(([id, roots]) => ({ id, name: id ? deptName(id) : "No department", roots: sort(roots) }))
       .sort((a, b) => (a.id ? 0 : 1) - (b.id ? 0 : 1) || a.name.localeCompare(b.name));
     return { depts, children: (id: string) => sort(children.get(id) ?? []) };
-  }, [tasks, deptName]);
+  }, [treeTasks, deptName]);
 
   // Shown if it passes the shared filters and the search, or if something under it does.
   const matches = (t: Task): boolean =>
@@ -308,6 +330,14 @@ export function PlanView({
   );
 }
 
+function fromTree(t: TreeTask): Task {
+  return {
+    ...t,
+    priority: null, estMin: null, sprintId: null, focus: null, focusOrder: null, noise: false, idleSince: null,
+    idleReminder: null, idleMinutes: 0, idleLog: "", doneAs: null, editedAt: t.doneAt ?? t.createdAt,
+  };
+}
+
 function countAll(list: Task[], childrenOf: (id: string) => Task[]): number {
   return list.reduce((n, t) => n + 1 + countAll(childrenOf(t.id), childrenOf), 0);
 }
@@ -339,10 +369,11 @@ function TreeRow({
   const idx = inPlan.get(task.id);
   const planned = idx !== undefined;
   const levelColor = { project: "bg-level-project", mission: "bg-level-mission", task: "bg-level-task" }[task.level ?? "task"];
+  const finished = isDoneStatus(task.status);
   return (
     <div role="treeitem" aria-expanded={kids.length ? !isCollapsed : undefined} aria-selected={planned}>
       <div
-        draggable
+        draggable={!finished}
         onDragStart={(e) => e.dataTransfer.setData("text/plain", task.id)}
         className={cx(
           "group flex min-h-9 items-center gap-1.5 rounded-lg pr-2 transition-colors hover:bg-white/6",
@@ -367,21 +398,25 @@ function TreeRow({
         <input
           type="checkbox"
           checked={planned}
+          disabled={finished}
           onChange={() => toggle(task.id)}
-          aria-label={`Plan "${task.name}" for today`}
-          className="size-4 shrink-0 accent-[#1856ff]"
+          aria-label={finished ? `"${task.name}" is ${task.status}` : `Plan "${task.name}" for today`}
+          className="size-4 shrink-0 accent-[#1856ff] disabled:opacity-30"
         />
         <span className={cx("ml-1 size-2 shrink-0 rounded-full", levelColor)} title={task.level ? LEVEL_LABELS[task.level] : "Task"} />
         <button
-          onClick={() => openDetails(task.id)}
+          onClick={() => (finished ? task.url && window.open(task.url, "_blank", "noopener") : openDetails(task.id))}
+          title={finished ? "Open in Notion" : undefined}
           className={cx(
             "min-w-0 flex-1 truncate text-left",
+            finished && "line-through decoration-ink-3/60 opacity-60",
             task.level === "project" ? "text-[14px] font-semibold text-ink" : task.level === "mission" ? "text-[13.5px] font-medium text-ink" : "text-[13px] text-ink-2",
           )}
         >
           {task.name}
         </button>
         <div className="hidden shrink-0 items-center gap-1.5 sm:flex">
+          {finished && <span className="text-[11px] font-semibold text-success">{task.status}</span>}
           {isBlocked(task) && <span className="text-[11px] font-semibold text-danger-hi">Blocked</span>}
           {task.focus && <span className="text-[11px] text-primary-hi">in focus</span>}
           <PriorityPill p={task.priority} />
