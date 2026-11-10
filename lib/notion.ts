@@ -197,9 +197,16 @@ async function probeAccess() {
   if (probed) return;
   probed = true;
   try {
-    const res = await notion().search({ filter: { property: "object", value: "page" }, page_size: 100 });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rows = (res.results as any[]).map((p) => ({
+    const all: any[] = [];
+    let cursor: string | undefined;
+    let res;
+    do {
+      res = await notion().search({ filter: { property: "object", value: "page" }, page_size: 100, start_cursor: cursor });
+      all.push(...res.results);
+      cursor = res.has_more ? (res.next_cursor ?? undefined) : undefined;
+    } while (cursor && all.length < 1500);
+    const rows = all.map((p) => ({
       id: p.id,
       title: isFullPage(p) ? titleOf(p) : "?",
       parent: p.parent?.type,
