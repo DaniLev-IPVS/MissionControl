@@ -25,25 +25,25 @@ export const COLUMNS = [
   { key: "done", title: "Done", dropStatus: "Done" },
 ] as const;
 
-// Task levels, renamed for the site. Notion still stores the old names
-// (Mission / Checkpoint / Bite); the new names are accepted too, so renaming
-// the options in Notion later needs no code change.
+// Task levels: Project > Mission > Task. Notion was renamed from
+// Mission > Checkpoint > Bite on 2026-11-10; the old names are still read
+// while the rename is in progress.
 export const LEVELS = ["project", "mission", "task"] as const;
 export type Level = (typeof LEVELS)[number];
 export const LEVEL_LABELS: Record<Level, string> = { project: "Project", mission: "Mission", task: "Task" };
-const LEVEL_FROM_NOTION: Record<string, Level> = {
-  Mission: "project", // old top level
-  Checkpoint: "mission",
-  Bite: "task",
-  Project: "project",
-  Task: "task",
-};
-// "Mission" is ambiguous after a rename in Notion, so it is resolved by the
-// option set: if Notion has no "Checkpoint" option any more, "Mission" means mission.
-export function levelFromNotion(name: string | null, notionStillUsesOldNames = true): Level | null {
-  if (!name) return null;
-  if (name === "Mission" && !notionStillUsesOldNames) return "mission";
-  return LEVEL_FROM_NOTION[name] ?? null;
+
+// "Mission" changed meaning (old top level -> new middle level), so it is
+// resolved from the Task Level options: while "Checkpoint" still exists,
+// Notion uses the old names.
+export function levelFromNotion(name: string | null, oldNames: boolean): Level | null {
+  switch (name) {
+    case "Project": return "project";
+    case "Mission": return oldNames ? "project" : "mission";
+    case "Checkpoint": return "mission";
+    case "Task":
+    case "Bite": return "task";
+    default: return null;
+  }
 }
 
 export const ALL_STATUSES = Object.values(STATUS_GROUPS).flat();

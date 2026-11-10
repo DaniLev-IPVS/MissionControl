@@ -6,7 +6,7 @@ import { fetchSprints, fetchTasks, fetchTitle } from "./notion";
 import type { Board, Sprint, Task } from "./types";
 
 // Shared (remote) cache in front of Notion: every viewer's 2s poll reads this,
-// so Notion sees at most one query per ~5s no matter how many tabs are open.
+// so Notion sees at most a couple of queries per ~5s no matter how many tabs are open.
 // The webhook and every write from the site expire it immediately.
 
 async function getSprints(): Promise<Sprint[]> {
@@ -42,7 +42,7 @@ export async function getBoard(sprintId?: string | null): Promise<Board> {
   const byId = new Map(tasks.map((t) => [t.id, t.name]));
   const needed = new Set<string>();
   for (const t of tasks) {
-    t.projectIds.forEach((id) => needed.add(id));
+    t.departmentIds.forEach((id) => needed.add(id));
     if (t.parentId && !byId.has(t.parentId)) needed.add(t.parentId);
   }
   const titles: Record<string, string> = Object.fromEntries(byId);

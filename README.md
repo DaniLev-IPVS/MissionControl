@@ -19,7 +19,7 @@ A website version of the **Personal Sprint Work Board** in Notion. Notion stays 
 ## Code map
 
 - `lib/notion.ts`: Notion API calls (query sprints and tasks, update a task) and the property mapping.
-- `lib/board.ts`: cached loader for the board (sprints, tasks, project and parent titles).
+- `lib/board.ts`: cached loader for the board (sprints, tasks, department and parent titles).
 - `lib/useBoard.ts`: client hook for live polling and optimistic `edit(task, patch)`. **Build the UI on this.**
 - `app/actions.ts`: `updateTask` server action (validates input, writes to Notion, expires the cache) and `login`.
 - `app/api/board/route.ts`: board JSON with ETag/304 support.
@@ -48,7 +48,7 @@ To use real data, copy `.env.example` to `.env.local` and fill it in.
 2. **Share the databases with it.** In Notion, open each of these and choose ••• → Connections → add the integration:
    - Personal Sprint Work Board / Personal Ticket Board
    - Sprints
-   - My Projects (so project names show up)
+   - Departments (formerly My Projects, so department names show up)
 3. **Set the Vercel environment variables** (Production and Preview):
    ```bash
    vercel env add NOTION_TOKEN

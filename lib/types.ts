@@ -8,7 +8,7 @@ export type Task = {
   priority: string | null;
   level: Level | null; // project > mission > task (Notion: Mission > Checkpoint > Bite)
   due: string | null;
-  projectIds: string[];
+  departmentIds: string[]; // Notion "Departments" relation
   parentId: string | null;
   hasChildren: boolean;
   editedAt: string;
@@ -26,7 +26,7 @@ export type Board = {
   sprint: Sprint | null;
   sprints: Sprint[];
   tasks: Task[];
-  titles: Record<string, string>; // project + parent page titles by id
+  titles: Record<string, string>; // department + parent page titles by id
   fetchedAt: string;
 };
 

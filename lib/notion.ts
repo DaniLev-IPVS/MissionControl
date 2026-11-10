@@ -60,8 +60,7 @@ export async function fetchTasks(sprintId: string): Promise<Task[]> {
     property: "Sprint",
     relation: { contains: sprintId },
   });
-  // Has the Task Level select been renamed in Notion yet? (see levelFromNotion)
-  const oldNames = !pages.some((p) => select(p.properties["Task Level"]) === "Task");
+  const oldNames = await levelsUseOldNames();
   return pages.map((p) => {
     const pr = p.properties;
     return {
@@ -72,12 +71,21 @@ export async function fetchTasks(sprintId: string): Promise<Task[]> {
       priority: select(pr["Priority"]),
       level: levelFromNotion(select(pr["Task Level"]), oldNames),
       due: date(pr["Due Date"]),
-      projectIds: relation(pr["My Projects"]),
+      departmentIds: relation(pr["Departments"] ?? pr["My Projects"]),
       parentId: relation(pr["Parent item"])[0] ?? null,
       hasChildren: relation(pr["Sub-item"]).length > 0,
       editedAt: p.last_edited_time,
     };
   });
+}
+
+// True while the Task Level select still has the old "Checkpoint" option.
+async function levelsUseOldNames(): Promise<boolean> {
+  const ds = await notion().dataSources.retrieve({ data_source_id: TASKS_DATA_SOURCE_ID });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const prop = (ds as any).properties?.["Task Level"];
+  const names: string[] = prop?.select?.options?.map((o: { name: string }) => o.name) ?? [];
+  return names.includes("Checkpoint");
 }
 
 export async function fetchTitle(pageId: string): Promise<string> {
