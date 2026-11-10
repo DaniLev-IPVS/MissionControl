@@ -3,14 +3,13 @@
 // Plumbing check only — deliberately unstyled. Replace with the real UI
 // (from the wireframe) using the useBoard() hook.
 import { useEffect, useState } from "react";
-import { ALL_STATUSES } from "@/lib/config";
+import { ALL_STATUSES, LEVEL_LABELS } from "@/lib/config";
 import { useBoard } from "@/lib/useBoard";
 
 export default function DebugPage() {
   const { board, tasks, error, saveError, lastSync, saving, setSprint, edit } = useBoard();
   const [now, setNow] = useState<number | null>(null);
   useEffect(() => {
-    setNow(Date.now());
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
@@ -46,6 +45,7 @@ export default function DebugPage() {
                   ))}
                 </select>
               </td>
+              <td>{t.level ? LEVEL_LABELS[t.level] : "-"}</td>
               <td>{t.priority ?? "-"}</td>
               <td>{t.due ?? "-"}</td>
               <td>{t.name}</td>

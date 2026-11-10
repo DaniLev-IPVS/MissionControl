@@ -15,7 +15,7 @@ function today(offset = 0) {
 function seed(): Store {
   const now = new Date().toISOString();
   const t = (id: string, name: string, s: string, extra: Partial<Task> = {}): Task => ({
-    id, url: "https://www.notion.so", name, status: s, priority: "P1", level: "Bite",
+    id, url: "https://www.notion.so", name, status: s, priority: "P1", level: "task",
     due: null, projectIds: ["proj-a"], parentId: "parent-1", hasChildren: false, editedAt: now, ...extra,
   });
   return {
@@ -26,7 +26,7 @@ function seed(): Store {
     ],
     titles: { "proj-a": "Studio Ops", "proj-b": "Client Work", "parent-1": "Launch checkpoint", "parent-2": "Finance setup" },
     tasks: [
-      t("parent-1", "Launch checkpoint", "Working on it", { level: "Checkpoint", hasChildren: true, parentId: null }),
+      t("parent-1", "Launch checkpoint", "Working on it", { level: "mission", hasChildren: true, parentId: null }),
       t("m1", "Draft the pitch deck", "Working on it", { priority: "P0", due: today(-2) }),
       t("m2", "Review the new logo files", "To Start", { due: today(1) }),
       t("m3", "Call the lead list", "To Start", { projectIds: ["proj-b"], parentId: "parent-2", due: today(2) }),

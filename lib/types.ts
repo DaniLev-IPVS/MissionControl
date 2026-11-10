@@ -1,10 +1,12 @@
+import type { Level } from "./config";
+
 export type Task = {
   id: string;
   url: string;
   name: string;
   status: string | null;
   priority: string | null;
-  level: string | null;
+  level: Level | null; // project > mission > task (Notion: Mission > Checkpoint > Bite)
   due: string | null;
   projectIds: string[];
   parentId: string | null;

@@ -1,7 +1,7 @@
 import "server-only";
 import { Client, isFullPage } from "@notionhq/client";
 import type { PageObjectResponse } from "@notionhq/client";
-import { SPRINTS_DATA_SOURCE_ID, TASKS_DATA_SOURCE_ID } from "./config";
+import { SPRINTS_DATA_SOURCE_ID, TASKS_DATA_SOURCE_ID, levelFromNotion } from "./config";
 import type { Sprint, Task, TaskPatch } from "./types";
 
 let client: Client | null = null;
@@ -60,6 +60,8 @@ export async function fetchTasks(sprintId: string): Promise<Task[]> {
     property: "Sprint",
     relation: { contains: sprintId },
   });
+  // Has the Task Level select been renamed in Notion yet? (see levelFromNotion)
+  const oldNames = !pages.some((p) => select(p.properties["Task Level"]) === "Task");
   return pages.map((p) => {
     const pr = p.properties;
     return {
@@ -68,7 +70,7 @@ export async function fetchTasks(sprintId: string): Promise<Task[]> {
       name: text(pr["Name"]) || "Untitled",
       status: status(pr["Status"]),
       priority: select(pr["Priority"]),
-      level: select(pr["Task Level"]),
+      level: levelFromNotion(select(pr["Task Level"]), oldNames),
       due: date(pr["Due Date"]),
       projectIds: relation(pr["My Projects"]),
       parentId: relation(pr["Parent item"])[0] ?? null,
