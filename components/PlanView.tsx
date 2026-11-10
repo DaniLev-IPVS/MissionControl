@@ -21,7 +21,7 @@ import { DASHBOARD_SLOTS, LEVEL_LABELS, TODAY_TARGET, isDoneStatus } from "@/lib
 import { commitPlan, currentOrder, draftTask, isBlocked, slotFor } from "@/lib/flow";
 import { useDictation } from "@/lib/hooks";
 import type { NewTask, Task, TreeTask } from "@/lib/types";
-import { DueBadge, PriorityPill, cx, deptHue, useMC } from "./ui";
+import { BoardBadge, DueBadge, PriorityPill, cx, deptHue, useMC } from "./ui";
 
 const MAX_PLAN = 1 + DASHBOARD_SLOTS + TODAY_TARGET.max;
 const PRIORITY_RANK: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
@@ -419,6 +419,7 @@ function TreeRow({
           {finished && <span className="text-[11px] font-semibold text-success">{task.status}</span>}
           {isBlocked(task) && <span className="text-[11px] font-semibold text-danger-hi">Blocked</span>}
           {task.focus && <span className="text-[11px] text-primary-hi">in focus</span>}
+          <BoardBadge board={task.board} />
           <PriorityPill p={task.priority} />
           <DueBadge due={task.due} today={today} />
           {planned && (

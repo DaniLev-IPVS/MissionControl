@@ -72,6 +72,22 @@ export function PriorityPill({ p }: { p: string | null }) {
   return <span className={cx("rounded-md px-1.5 py-0.5 font-mono text-[10.5px] font-semibold ring-1", style)}>{p}</span>;
 }
 
+/** Which Notion board a task lives on. */
+export function BoardBadge({ board }: { board?: string }) {
+  const influity = board === "influity";
+  return (
+    <span
+      title={influity ? "From the Influity Task Board" : "From your Personal Ticket Board"}
+      className={cx(
+        "rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold ring-1",
+        influity ? "bg-noise/12 text-noise ring-noise/35" : "bg-white/5 text-ink-3 ring-white/10",
+      )}
+    >
+      {influity ? "Influity" : "Personal"}
+    </span>
+  );
+}
+
 export function DueBadge({ due, today }: { due: string | null; today: string }) {
   if (!due) return null;
   const overdue = due < today;

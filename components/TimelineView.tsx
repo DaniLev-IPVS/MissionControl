@@ -6,7 +6,7 @@ import { LEVEL_LABELS } from "@/lib/config";
 import { addDays } from "@/lib/flow";
 import type { Level } from "@/lib/config";
 import type { TreeTask } from "@/lib/types";
-import { cx, deptHue, useMC } from "./ui";
+import { BoardBadge, cx, deptHue, useMC } from "./ui";
 
 // Gantt-style timeline of projects (and their missions) with progress.
 // Progress = finished leaf tasks / all leaf tasks under the item (cancelled ones excluded).
@@ -255,8 +255,9 @@ function Row({
             <a href={node.task.url} target="_blank" rel="noreferrer" className={cx("block truncate hover:underline", depth ? "text-[13px] text-ink-2" : "text-sm font-medium text-ink")}>
               {node.task.name}
             </a>
-            <p className="text-[10.5px] text-ink-3">
-              {node.task.level ? LEVEL_LABELS[node.task.level] : "Task"} · {node.done}/{node.total} done
+            <p className="flex items-center gap-1.5 text-[10.5px] text-ink-3">
+              <span>{node.task.level ? LEVEL_LABELS[node.task.level] : "Task"} · {node.done}/{node.total} done</span>
+              <BoardBadge board={node.task.board} />
             </p>
           </div>
         </div>

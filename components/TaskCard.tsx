@@ -5,7 +5,7 @@ import { Ban, Check, ChevronDown, CornerDownRight, GripVertical, Info, Play, Und
 import { LEVEL_LABELS } from "@/lib/config";
 import { done, isBlocked, laneOf, makeMain, markBlocked, moveTo, unblock, type Lane } from "@/lib/flow";
 import type { Task } from "@/lib/types";
-import { DeptChip, DueBadge, IdleTimer, LevelBadge, PriorityPill, cx, useMC } from "./ui";
+import { BoardBadge, DeptChip, DueBadge, IdleTimer, LevelBadge, PriorityPill, cx, useMC } from "./ui";
 
 export const LANE_LABELS: Record<Lane, string> = {
   main: "Main",
@@ -38,6 +38,7 @@ export function TaskMeta({ task }: { task: Task }) {
       {task.departmentIds.slice(0, 2).map((id) => (
         <DeptChip key={id} id={id} name={deptName(id)} />
       ))}
+      <BoardBadge board={task.board} />
       <PriorityPill p={task.priority} />
       <DueBadge due={task.due} today={today} />
       {isBlocked(task) && (
