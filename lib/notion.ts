@@ -286,3 +286,40 @@ export async function createTaskInNotion(t: NewTask, sprintId: string | null): P
   });
   return page.id;
 }
+
+// Run only after a failed load: production masks errors thrown inside cached
+// functions, so check each database directly and say which one is the problem.
+const SOURCES = [
+  ["Personal Ticket Board", TASKS_DATA_SOURCE_ID],
+  ["Departments", DEPARTMENTS_DATA_SOURCE_ID],
+  ["Sprints", SPRINTS_DATA_SOURCE_ID],
+  ["Mission Control Days (inside the Mission Control page)", DAYS_DATA_SOURCE_ID],
+] as const;
+
+let lastDiagnosis: { at: number; message: string } | null = null;
+
+export async function diagnoseNotion(): Promise<string> {
+  if (lastDiagnosis && Date.now() - lastDiagnosis.at < 30_000) return lastDiagnosis.message;
+  let message: string;
+  if (!process.env.NOTION_TOKEN) {
+    message = "NOTION_TOKEN is not set in Vercel.";
+  } else {
+    const missing: string[] = [];
+    let other: string | null = null;
+    for (const [name, id] of SOURCES) {
+      try {
+        await notion().dataSources.retrieve({ data_source_id: id });
+      } catch (err) {
+        const code = (err as { code?: string }).code;
+        if (code === "object_not_found" || code === "restricted_resource") missing.push(name);
+        else if (code === "unauthorized") other = "the NOTION_TOKEN in Vercel is invalid. Copy the integration secret again.";
+        else other ??= err instanceof Error ? err.message : String(err);
+      }
+    }
+    message = missing.length
+      ? `your Notion integration can't see: ${missing.join(", ")}. In Notion, open each one, choose ⋯ → Connections, and add the integration.`
+      : (other ?? "Notion didn't answer. Try again in a moment.");
+  }
+  lastDiagnosis = { at: Date.now(), message };
+  return message;
+}

@@ -1,3 +1,4 @@
+import { diagnoseNotion } from "@/lib/notion";
 import { connection, type NextRequest } from "next/server";
 import { getBoard } from "@/lib/board";
 
@@ -14,8 +15,7 @@ export async function GET(request: NextRequest) {
     return Response.json(board, { headers });
   } catch (err) {
     console.error("board fetch failed", err);
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return Response.json({ error: message }, { status: 502 });
+    return Response.json({ error: await diagnoseNotion() }, { status: 502 });
   }
 }
 
