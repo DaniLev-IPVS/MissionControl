@@ -1,4 +1,4 @@
-# Notion Sprint Board
+# Mission Control
 
 A website version of the **Personal Sprint Work Board** in Notion. Notion stays the only source of truth, and the site reads from it and writes back to it.
 
