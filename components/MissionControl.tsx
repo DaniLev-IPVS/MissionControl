@@ -486,6 +486,23 @@ export default function MissionControl() {
                 </div>
               </LaneSection>
             )}
+
+            {showBacklog && (
+              <LaneSection
+                lane="backlog"
+                itemCount={backlog.length}
+                icon={<ListTodo className="size-4" />}
+                title="To-do list"
+                subtitle="Everything else, waiting to be planned"
+                count={`${s.backlog.length}`}
+                tone="neutral"
+                onDrop={drop}
+                dragging={!!dragId}
+                empty="All clear."
+              >
+                <Backlog tasks={backlog} grouped={sort === "flow" && !depts.size} onDragStart={setDragId} />
+              </LaneSection>
+            )}
           </div>
 
           <div className="space-y-5 xl:col-span-4">
@@ -538,22 +555,7 @@ export default function MissionControl() {
               </section>
             )}
 
-            {showBacklog && (
-              <LaneSection
-                lane="backlog"
-                itemCount={backlog.length}
-                icon={<ListTodo className="size-4" />}
-                title="To-do list"
-                subtitle="Everything else, waiting to be planned"
-                count={`${s.backlog.length}`}
-                tone="neutral"
-                onDrop={drop}
-                dragging={!!dragId}
-                empty="All clear."
-              >
-                <Backlog tasks={backlog} grouped={sort === "flow" && !depts.size} onDragStart={setDragId} />
-              </LaneSection>
-            )}
+
           </div>
         </div>
         </>
@@ -736,7 +738,7 @@ function Backlog({ tasks, grouped, onDragStart }: { tasks: Task[]; grouped: bool
   const { deptName } = useMC();
   if (!grouped) {
     return (
-      <div className="scroll-thin max-h-[70vh] space-y-2.5 overflow-y-auto pr-1">
+      <div className="scroll-thin grid max-h-[70vh] gap-2.5 overflow-y-auto pr-1 md:grid-cols-2">
         {tasks.map((t, i) => (
           <TaskCard key={t.id} task={t} index={i} onDragStart={onDragStart} dense />
         ))}
@@ -756,9 +758,11 @@ function Backlog({ tasks, grouped, onDragStart }: { tasks: Task[]; grouped: bool
             {dept ? <DeptChip id={dept} name={deptName(dept)} /> : <span className="text-xs text-ink-3">No department</span>}
             <span className="font-mono text-[11px] text-ink-3">{list.length}</span>
           </div>
-          {list.map((t, i) => (
-            <TaskCard key={t.id} task={t} index={i} onDragStart={onDragStart} dense />
-          ))}
+          <div className="grid gap-2.5 md:grid-cols-2">
+            {list.map((t, i) => (
+              <TaskCard key={t.id} task={t} index={i} onDragStart={onDragStart} dense />
+            ))}
+          </div>
         </div>
       ))}
     </div>
