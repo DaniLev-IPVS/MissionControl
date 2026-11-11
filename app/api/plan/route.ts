@@ -1,7 +1,8 @@
 import { connection } from "next/server";
 import { z } from "zod";
 import { getBoard } from "@/lib/board";
-import { aiMode, generateJSON } from "@/lib/ai";
+import { aiMode, currentModel, generateJSON } from "@/lib/ai";
+import { historyForPrompt, saveRecommendation, savePlan, type RecItem } from "@/lib/history";
 import { DASHBOARD_SLOTS, LEVEL_LABELS, TODAY_TARGET } from "@/lib/config";
 import type { NewTask, Task } from "@/lib/types";
 
@@ -48,6 +49,8 @@ export async function POST(request: Request) {
     messages?: Msg[];
     draft?: string[];
     recommend?: boolean;
+    source?: "planner" | "voice";
+    plan?: string[]; // what was actually planned (Start my day / Save plan)
     haiku?: { kind: "plan" | "day"; items: string[]; note?: string };
   };
   try {
@@ -56,6 +59,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "bad json" }, { status: 400 });
   }
   if (body.recommend) return recommend();
+  if (Array.isArray(body.plan)) return logPlan(body.plan);
   if (body.haiku) return haiku(body.haiku);
 
   const messages = (body.messages ?? [])
@@ -95,6 +99,14 @@ export async function POST(request: Request) {
       .join(" | ");
   };
 
+  const history = aiMode() ? await historyForPrompt(new Set(tasks.map((t) => t.id))) : "";
+  const source = body.source === "voice" ? "voice" : "planner";
+  const lastUser = messages[messages.length - 1].content;
+  const asItems = (ids: string[], names: Map<string, string> = new Map()): RecItem[] =>
+    ids.map((id) => {
+      const t = byId.get(id);
+      return { id, name: t?.name ?? names.get(id) ?? id, level: t?.level ?? null, board: t?.board ?? "personal" };
+    });
   const system = `You plan the user's workday in Mission Control, a signal-over-noise focus board.
 Today is ${new Date().toDateString()}.
 
@@ -111,9 +123,13 @@ Departments: ${board.departments.map((d) => d.name).join(", ") || "none"}.
 Open tasks (alias | level | name | department | parent | priority | due | status):
 ${tasks.map(line).join("\n")}
 
-Current draft order: ${draft.map((id) => aliasOf.get(id)).join(", ") || "(empty)"}`;
+Current draft order: ${draft.map((id) => aliasOf.get(id)).join(", ") || "(empty)"}${historyBlock(history)}`;
 
-  if (!aiMode()) return Response.json(keywordFallback(messages[messages.length - 1].content, tasks, draft));
+  if (!aiMode()) {
+    const res = keywordFallback(lastUser, tasks, draft);
+    await saveRecommendation({ source, prompt: lastUser, reply: res.reply, items: asItems(res.order), usedAI: false });
+    return Response.json(res);
+  }
 
   try {
     const output = await generateJSON({ system, messages, schema: Plan });
@@ -139,6 +155,15 @@ Current draft order: ${draft.map((id) => aliasOf.get(id)).join(", ") || "(empty)
       .filter((id): id is string => !!id && !seen.has(id) && !!seen.add(id))
       .slice(0, MAX_PLAN);
 
+    const newNames = new Map(creates.map((c) => [c.tempId, c.name]));
+    await saveRecommendation({
+      source,
+      prompt: lastUser,
+      reply: output.reply,
+      items: asItems(order, newNames),
+      model: currentModel(),
+      usedAI: true,
+    });
     return Response.json({ reply: output.reply, order, creates: creates.filter((c) => order.includes(c.tempId)) });
   } catch (err) {
     console.error("planner failed", err);
@@ -215,8 +240,18 @@ async function recommend() {
       .filter(Boolean)
       .join(" | ");
 
-  const fallback = (note: string) => Response.json({ reply: note, picks: heuristicPicks(tasks, hasKids) });
+  const toItems = (picks: Pick[]): RecItem[] =>
+    picks.map((p) => {
+      const t = byId.get(p.id);
+      return { id: p.id, name: t?.name ?? p.id, level: t?.level ?? null, board: t?.board ?? "personal", why: p.why };
+    });
+  const fallback = async (note: string) => {
+    const picks = heuristicPicks(tasks, hasKids);
+    await saveRecommendation({ source: "recommend", reply: note, items: toItems(picks), usedAI: false });
+    return Response.json({ reply: note, picks });
+  };
   if (!aiMode()) return fallback("AI isn't set up here, so these are ranked by priority, due date and what's in progress.");
+  const history = await historyForPrompt(new Set(tasks.map((t) => t.id)));
 
   try {
     const output = await generateJSON({
@@ -228,7 +263,7 @@ Prefer actionable tasks (lowest level). Recommend a whole mission or project onl
 Skip Blocked items. Give each pick a short reason.
 
 Open items (alias | level | name | department | parent | priority | due | status | notes):
-${tasks.map(line).join("\n")}`,
+${tasks.map(line).join("\n")}${historyBlock(history)}`,
       messages: [{ role: "user", content: "Recommend today's tasks." }],
     });
     const seen = new Set<string>();
@@ -236,11 +271,30 @@ ${tasks.map(line).join("\n")}`,
       .map((p) => ({ id: alias.get(p.alias) ?? "", why: p.why.slice(0, 140) }))
       .filter((p) => p.id && !seen.has(p.id) && !!seen.add(p.id))
       .slice(0, MAX_PLAN);
+    await saveRecommendation({ source: "recommend", reply: output.reply, items: toItems(picks), model: currentModel(), usedAI: true });
     return Response.json({ reply: output.reply, picks });
   } catch (err) {
     console.error("recommend failed", err);
     return fallback("The AI didn't answer, so these are ranked by priority, due date and what's in progress.");
   }
+}
+
+// The last 7 days of recommendations, so the AI can see what it already suggested and what got skipped.
+function historyBlock(history: string) {
+  if (!history) return "";
+  return `
+
+Your recommendations from the last 7 days (taken = made it into that day's plan; still open / finished = status now):
+${history}
+Use this: don't keep pushing items that were skipped again and again unless they're urgent now (say why if you do), follow through on taken items that are still open, and don't re-suggest finished work.`;
+}
+
+async function logPlan(ids: string[]) {
+  const clean = ids.filter((id) => typeof id === "string" && /^[\w-]{1,64}$/.test(id) && !id.startsWith("tmp-")).slice(0, 20);
+  const board = await getBoard();
+  const byId = new Map(board.tasks.map((t) => [t.id, t]));
+  await savePlan(clean.map((id) => ({ id, name: byId.get(id)?.name ?? id, level: byId.get(id)?.level ?? null, board: byId.get(id)?.board })));
+  return Response.json({ ok: true });
 }
 
 function heuristicPicks(tasks: Task[], hasKids: Set<string>): Pick[] {

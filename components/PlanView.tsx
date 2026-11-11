@@ -18,12 +18,13 @@ import {
 } from "lucide-react";
 import { signIn } from "@/app/actions";
 import { DASHBOARD_SLOTS, LEVEL_LABELS, TODAY_TARGET, isDoneStatus } from "@/lib/config";
-import { commitPlan, currentOrder, draftTask, isBlocked, slotFor } from "@/lib/flow";
+import { commitPlan, currentOrder, draftTask, isBlocked, markBlocked, slotFor, unblock } from "@/lib/flow";
 import { checkPlan } from "@/lib/days";
 import { useDictation } from "@/lib/hooks";
 import type { NewTask, Task, TreeTask } from "@/lib/types";
 import { Haiku } from "./Haiku";
-import { BoardBadge, DeptChip, DueBadge, LevelBadge, PriorityPill, cx, deptHue, useMC } from "./ui";
+import { Thinking } from "./Thinking";
+import { BoardBadge, DeptChip, DueBadge, LevelBadge, PriorityPill, cx, deptHue, markDone, useMC } from "./ui";
 
 const MAX_PLAN = 1 + DASHBOARD_SLOTS + TODAY_TARGET.max;
 const PRIORITY_RANK: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
@@ -141,7 +142,15 @@ export function PlanView({
       ? await apply(plan, (changes, creates) => signIn(changes, creates, draft))
       : await apply(plan);
     setSaving(false);
-    if (ok) onDone();
+    if (ok) {
+      // Remember what was actually planned, so tomorrow's recommendations know what was taken.
+      void fetch("/api/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: draft.filter((id) => !id.startsWith("tmp-")) }),
+      }).catch(() => {});
+      onDone();
+    }
   }
 
   const check = useMemo(() => checkPlan(draft.map((id) => byId.get(id)).filter(Boolean) as Task[]), [draft, byId]);
@@ -531,7 +540,7 @@ function Recommendations({
   full: boolean;
   autoRun?: boolean; // Start your day: fetch recommendations straight away
 }) {
-  const { deptName, titleOf } = useMC();
+  const { deptName, titleOf, tasks, today, apply, openDetails } = useMC();
   const [picks, setPicks] = useState<Rec[] | null>(null);
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
@@ -626,10 +635,13 @@ function Recommendations({
         </button>
       </div>
 
+      {busy && <Thinking className="mt-5 rounded-2xl px-4 py-4 glass-chip" />}
       {error && <p className="mt-3 text-sm text-danger-hi">{error}</p>}
-      {picks && !groups.length && !error && <p className="mt-3 text-sm text-ink-3">Nothing to recommend: no open, unblocked work.</p>}
+      {!busy && picks && !groups.length && !error && (
+        <p className="mt-3 text-sm text-ink-3">Nothing left to recommend: everything here is done, blocked or planned.</p>
+      )}
 
-      {groups.length > 0 && (
+      {!busy && groups.length > 0 && (
         <div className="mt-4 grid items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
           {groups.map((g, gi) => (
             <div key={g.root?.id ?? gi} className="rounded-2xl p-3.5 glass-chip">
@@ -672,6 +684,25 @@ function Recommendations({
                           {added ? "Added" : "Add"}
                         </button>
                       </div>
+                      {/* Already done, stuck, or needs another status? Fix it right here. */}
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        <RecAction tone="success" onClick={() => markDone({ tasks, today, apply }, task)} label={`Mark "${task.name}" done`}>
+                          Done
+                        </RecAction>
+                        {isBlocked(task) ? (
+                          <RecAction onClick={() => apply(unblock(tasks, task, today))} label={`Unblock "${task.name}"`}>
+                            Unblock
+                          </RecAction>
+                        ) : (
+                          <RecAction tone="danger" onClick={() => apply(markBlocked(tasks, task, today))} label={`Mark "${task.name}" blocked`}>
+                            Blocked
+                          </RecAction>
+                        )}
+                        <RecAction onClick={() => openDetails(task.id)} label={`Change status or details of "${task.name}"`}>
+                          Status…
+                        </RecAction>
+                        {task.status && <span className="ml-auto self-center text-[11px] text-ink-3">{task.status}</span>}
+                      </div>
                     </li>
                   );
                 })}
@@ -681,6 +712,36 @@ function Recommendations({
         </div>
       )}
     </section>
+  );
+}
+
+function RecAction({
+  children,
+  onClick,
+  label,
+  tone,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  label: string;
+  tone?: "success" | "danger";
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className={cx(
+        "h-7 rounded-full px-2.5 text-[11px] font-semibold transition-colors",
+        tone === "success"
+          ? "text-success hover:bg-success/15"
+          : tone === "danger"
+            ? "text-danger-hi hover:bg-danger/15"
+            : "text-ink-3 hover:bg-white/10 hover:text-ink",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -701,12 +762,15 @@ function PlannerChat({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const voice = useDictation(setInput);
+  const spoke = useRef(false); // this message was dictated
   const endRef = useRef<HTMLDivElement>(null);
 
   async function send() {
     const text = input.trim();
     if (!text || busy) return;
     voice.stop();
+    const source = spoke.current ? "voice" : "planner";
+    spoke.current = false;
     const next = [...messages, { role: "user" as const, content: text }];
     setMessages(next);
     setInput("");
@@ -716,7 +780,7 @@ function PlannerChat({
       const res = await fetch("/api/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next, draft: draft.filter((id) => !id.startsWith("tmp-")) }),
+        body: JSON.stringify({ messages: next, draft: draft.filter((id) => !id.startsWith("tmp-")), source }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
@@ -761,7 +825,7 @@ function PlannerChat({
             {m.content}
           </div>
         ))}
-        {busy && <div className="w-fit rounded-2xl bg-white/6 px-3.5 py-2 text-sm text-ink-3">Planning…</div>}
+        {busy && <Thinking kind="plan" className="w-fit rounded-2xl bg-white/6 px-3.5 py-2.5" />}
         <div ref={endRef} />
       </div>
       {error && <p className="mt-2 text-xs text-danger-hi">{error}</p>}
@@ -789,7 +853,13 @@ function PlannerChat({
         {voice.supported && (
           <button
             type="button"
-            onClick={() => (voice.listening ? voice.stop() : voice.start(input))}
+            onClick={() => {
+              if (voice.listening) voice.stop();
+              else {
+                spoke.current = true;
+                voice.start(input);
+              }
+            }}
             aria-label={voice.listening ? "Stop dictation" : "Speak to the planner"}
             aria-pressed={voice.listening}
             className={cx("grid size-11 shrink-0 place-items-center rounded-full", voice.listening ? "animate-pulse bg-danger text-white" : "text-ink-2 glass-chip hover:text-ink")}

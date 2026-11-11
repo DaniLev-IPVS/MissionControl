@@ -121,3 +121,28 @@ select, input[type="date"], input[type="number"] { color-scheme: dark; }
   backdrop-filter: blur(40px) saturate(170%);
   -webkit-backdrop-filter: blur(40px) saturate(170%);
 }
+
+/* ---- AI thinking animation ---------------------------------------------- */
+@keyframes mc-bounce {
+  0%, 100% { transform: translateY(0) scale(1.1, 0.85); }
+  12% { transform: translateY(0) scale(1, 1); }
+  45% { transform: translateY(-22px) scale(0.92, 1.08); }
+  60% { transform: translateY(-24px) scale(1, 1); }
+  88% { transform: translateY(0) scale(1, 1); }
+}
+@keyframes mc-word-in {
+  from { opacity: 0; transform: translateY(6px); filter: blur(3px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+@keyframes mc-dots {
+  0% { content: ""; }
+  25% { content: "."; }
+  50% { content: ".."; }
+  75% { content: "..."; }
+}
+.mc-bounce { animation: mc-bounce 0.9s cubic-bezier(0.3, 0, 0.3, 1) infinite; }
+.mc-word { animation: mc-word-in 0.35s ease-out both; }
+.mc-dots::after { content: ""; animation: mc-dots 1.2s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .mc-bounce, .mc-word, .mc-dots::after { animation: none; }
+}

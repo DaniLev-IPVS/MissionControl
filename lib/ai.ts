@@ -15,6 +15,7 @@ export const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL ?? "claude-opus-5-5";
 export const GATEWAY_MODEL = process.env.PLANNER_MODEL ?? "anthropic/claude-opus-5.5";
 
 export type AIMode = "anthropic" | "gateway" | null;
+export const currentModel = () => (aiMode() === "anthropic" ? ANTHROPIC_MODEL : aiMode() === "gateway" ? GATEWAY_MODEL : null);
 export function aiMode(): AIMode {
   if (process.env.ANTHROPIC_API_KEY) return "anthropic";
   if (process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN) return "gateway";
