@@ -1,8 +1,8 @@
-import { generateText, Output } from "ai";
 import { connection } from "next/server";
 import { z } from "zod";
 import { getBoard } from "@/lib/board";
-import { DASHBOARD_SLOTS, LEVEL_LABELS, PLANNER_MODEL, TODAY_TARGET } from "@/lib/config";
+import { aiMode, generateJSON } from "@/lib/ai";
+import { DASHBOARD_SLOTS, LEVEL_LABELS, TODAY_TARGET } from "@/lib/config";
 import type { NewTask, Task } from "@/lib/types";
 
 // AI day planner. The client sends the conversation and its current draft order;
@@ -113,16 +113,10 @@ ${tasks.map(line).join("\n")}
 
 Current draft order: ${draft.map((id) => aliasOf.get(id)).join(", ") || "(empty)"}`;
 
-  const hasAI = !!(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN);
-  if (!hasAI) return Response.json(keywordFallback(messages[messages.length - 1].content, tasks, draft));
+  if (!aiMode()) return Response.json(keywordFallback(messages[messages.length - 1].content, tasks, draft));
 
   try {
-    const { output } = await generateText({
-      model: PLANNER_MODEL,
-      system,
-      messages,
-      output: Output.object({ schema: Plan }),
-    });
+    const output = await generateJSON({ system, messages, schema: Plan });
 
     const deptByName = new Map(board.departments.map((d) => [d.name.toLowerCase(), d.id]));
     const creates: NewTask[] = output.newTasks.slice(0, 10).map((n) => {
@@ -174,17 +168,17 @@ async function haiku(input: { kind: "plan" | "day"; items: string[]; note?: stri
             insight: note || "Logged and cleared. Unfinished work is back on the list.",
           },
     );
-  if (!(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN)) return fallback();
+  if (!aiMode()) return fallback();
   try {
-    const { output } = await generateText({
-      model: PLANNER_MODEL,
+    const output = await generateJSON({
+      effort: "low",
       system:
         "You write one haiku (5-7-5) about someone's workday, warm and a little wry, then one honest sentence of analysis. No emojis.",
-      prompt:
+      schema: Haiku,
+      messages: [{ role: "user", content:
         kind === "plan"
           ? `Today's plan, in order:\n${items.map((x, i) => `${i + 1}. ${x}`).join("\n")}\n${note ? `Load check: ${note}` : ""}`
-          : `What got done today:\n${items.map((x) => `- ${x}`).join("\n") || "(nothing)"}\n${note ? `Stats: ${note}` : ""}`,
-      output: Output.object({ schema: Haiku }),
+          : `What got done today:\n${items.map((x) => `- ${x}`).join("\n") || "(nothing)"}\n${note ? `Stats: ${note}` : ""}` }],
     });
     return Response.json({ lines: output.lines.slice(0, 3), insight: output.insight });
   } catch (err) {
@@ -222,12 +216,11 @@ async function recommend() {
       .join(" | ");
 
   const fallback = (note: string) => Response.json({ reply: note, picks: heuristicPicks(tasks, hasKids) });
-  const hasAI = !!(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN);
-  if (!hasAI) return fallback("AI isn't set up here, so these are ranked by priority, due date and what's in progress.");
+  if (!aiMode()) return fallback("AI isn't set up here, so these are ranked by priority, due date and what's in progress.");
 
   try {
-    const { output } = await generateText({
-      model: PLANNER_MODEL,
+    const output = await generateJSON({
+      schema: Recommendation,
       system: `You recommend what the user should work on today in Mission Control, a signal-over-noise focus board.
 Today is ${new Date().toDateString()}.
 Pick ${1 + DASHBOARD_SLOTS + TODAY_TARGET.min}-${MAX_PLAN} items, best first. Favour: P0, due soon or overdue, already in progress, unblocking others, momentum on one or two projects rather than scattering.
@@ -236,8 +229,7 @@ Skip Blocked items. Give each pick a short reason.
 
 Open items (alias | level | name | department | parent | priority | due | status | notes):
 ${tasks.map(line).join("\n")}`,
-      prompt: "Recommend today's tasks.",
-      output: Output.object({ schema: Recommendation }),
+      messages: [{ role: "user", content: "Recommend today's tasks." }],
     });
     const seen = new Set<string>();
     const picks: Pick[] = output.picks

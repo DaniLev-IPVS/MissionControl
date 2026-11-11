@@ -82,8 +82,6 @@ export const focusFromNotion = (name: string | null): Focus | null =>
 
 export const DASHBOARD_SLOTS = 3;
 export const TIME_ZONE = "America/Toronto";
-// The AI planner (via Vercel AI Gateway).
-export const PLANNER_MODEL = process.env.PLANNER_MODEL ?? "anthropic/claude-sonnet-5.5";
 export const TODAY_TARGET = { min: 2, max: 6 };
 // Unplanned tasks due within this many days count as noise.
 export const NOISE_DUE_DAYS = 2;

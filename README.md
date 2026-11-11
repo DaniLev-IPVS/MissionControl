@@ -26,7 +26,12 @@ The flow rules live in `lib/flow.ts` as pure functions. Each action returns the 
 - When a task is marked done it gets `Done At` and `Done As` (Signal if it was planned and not a pop-up, otherwise Noise).
 - **Days** charts the last 14 days. **Timeline** is a Gantt of every project and mission, filled by the share of its tasks that are done.
 
-The AI planner (`app/api/plan`) calls Claude through **Vercel AI Gateway** (`PLANNER_MODEL`, default `anthropic/claude-sonnet-5.5`). On Vercel it authenticates with the project's OIDC token. Locally, set `AI_GATEWAY_API_KEY`; without it the planner falls back to keyword matching.
+The AI (planner chat, "Recommend me today's tasks", haiku; all in `lib/ai.ts`) calls Claude one of two ways:
+
+- **Your own Anthropic key (preferred):** set `ANTHROPIC_API_KEY`. Calls go straight to Anthropic with the official SDK and are billed to your Anthropic account, where you set spend limits. Model: `ANTHROPIC_MODEL`, default `claude-opus-5-5` ($4 / $20 per million tokens); `claude-sonnet-5-5` is half that.
+- **Vercel AI Gateway:** used when there's no Anthropic key. On Vercel it authenticates with the project's OIDC token (enable AI Gateway for the team); locally set `AI_GATEWAY_API_KEY`. Model: `PLANNER_MODEL`, default `anthropic/claude-opus-5.5`. Same list prices as Anthropic.
+
+With neither, everything still works without AI: recommendations rank by priority and due date, the planner matches keywords, and the haiku is a fixed one.
 
 ## How sync works
 
