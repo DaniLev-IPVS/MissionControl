@@ -1,10 +1,9 @@
-import { diagnoseNotion, probeAccess } from "@/lib/notion";
+import { diagnoseNotion } from "@/lib/notion";
 import { connection, type NextRequest } from "next/server";
 import { getBoard } from "@/lib/board";
 
 export async function GET(request: NextRequest) {
   await connection();
-  if (process.env.NOTION_TOKEN) await probeAccess(); // temporary, once per instance
   try {
     const board = await getBoard();
     // ETag ignores fetchedAt so unchanged boards answer 304 with no body.

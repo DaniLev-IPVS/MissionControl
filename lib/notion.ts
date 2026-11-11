@@ -190,35 +190,6 @@ async function sharedTasks(filter: object) {
   return { tasks: pages.map((p) => withState(toTask(p, oldNames, "influity"), states)), warnings };
 }
 
-// Temporary: log (once per server instance) which pages the integration can reach,
-// to find a home for the Mission Control databases that needs no extra share.
-let probed = false;
-export async function probeAccess() {
-  if (probed) return;
-  probed = true;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const all: any[] = [];
-    let cursor: string | undefined;
-    let res;
-    do {
-      res = await notion().search({ filter: { property: "object", value: "page" }, page_size: 100, start_cursor: cursor });
-      all.push(...res.results);
-      cursor = res.has_more ? (res.next_cursor ?? undefined) : undefined;
-    } while (cursor && all.length < 1500);
-    const rows = all.map((p) => ({
-      id: p.id,
-      title: isFullPage(p) ? titleOf(p) : "?",
-      parent: p.parent?.type,
-      parentId: p.parent?.page_id ?? p.parent?.data_source_id ?? p.parent?.database_id ?? null,
-    }));
-    const top = rows.filter((r) => r.parent !== "data_source_id" && r.parent !== "database_id");
-    console.log("ACCESS-PROBE", JSON.stringify({ total: rows.length, more: res.has_more, pages: top }));
-  } catch (err) {
-    console.log("ACCESS-PROBE failed", err instanceof Error ? err.message : String(err));
-  }
-}
-
 export async function fetchOpenTasks(): Promise<Soft<Task[]>> {
   const [pages, oldNames, shared] = await Promise.all([
     queryAll(TASKS_DATA_SOURCE_ID, {
