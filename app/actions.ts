@@ -61,6 +61,10 @@ function cleanPatch(p: TaskPatch): TaskPatch {
     if (p.doneAt !== null && !isISO(p.doneAt)) throw new Error("Bad done time");
     c.doneAt = p.doneAt;
   }
+  if (p.missedOn !== undefined) {
+    if (p.missedOn !== null && !DAY.test(p.missedOn)) throw new Error("Bad missed date");
+    c.missedOn = p.missedOn;
+  }
   if (p.doneAs !== undefined) {
     if (p.doneAs !== null && !oneOf(["Signal", "Noise"], p.doneAs)) throw new Error("Bad done as");
     c.doneAs = p.doneAs;
@@ -174,7 +178,8 @@ export async function signIn(changes: Change[], creates: NewTask[], order: strin
   return { ok: true };
 }
 
-/** End the day: save the stats and notes; optionally send unfinished planned work back to the to-do list. */
+/** End the day: save the stats and notes, and flush today's lanes. Unfinished work goes back to
+ *  the to-do list marked with the day it was missed. */
 export async function signOut(dayId: string, stats: DayStats, notes: string, returnIds: string[]) {
   if (!ID.test(dayId) || returnIds.some((id) => !ID.test(id))) throw new Error("Bad id");
   const nums = ["planned", "done", "signalDone", "noiseDone", "plannedDone", "carriedOver", "idleMinutes"] as const;
@@ -183,7 +188,11 @@ export async function signOut(dayId: string, stats: DayStats, notes: string, ret
   if (typeof notes !== "string" || notes.length > 2000) throw new Error("Bad notes");
 
   if (returnIds.length) {
-    const { errors } = await writeChanges(returnIds.map((id) => ({ id, patch: { focus: null, focusOrder: null } })), []);
+    const missedOn = todayInZone();
+    const { errors } = await writeChanges(
+      returnIds.map((id) => ({ id, patch: { ...FLUSH, missedOn } })),
+      [],
+    );
     if (errors.length) throw new Error(errors[0]);
   }
   const patch = { ...stats, notes, signedOut: new Date().toISOString() };
@@ -192,6 +201,8 @@ export async function signOut(dayId: string, stats: DayStats, notes: string, ret
   updateTag(BOARD_TAG);
   return { ok: true };
 }
+
+const FLUSH = { focus: null, focusOrder: null, idleSince: null, idleReminder: null } as const;
 
 export async function login(_: unknown, form: FormData) {
   const creds = adminCredentials();

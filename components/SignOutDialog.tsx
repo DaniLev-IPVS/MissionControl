@@ -1,24 +1,25 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Mic, MicOff } from "lucide-react";
+import { Coins, Mic, MicOff } from "lucide-react";
 import { signOut } from "@/app/actions";
 import { computeDayStats } from "@/lib/days";
 import { useDictation, useNow } from "@/lib/hooks";
 import { fmtMinutes } from "./DetailsDrawer";
-import { Modal, Segmented, cx, useMC } from "./ui";
+import { Haiku } from "./Haiku";
+import { Modal, cx, useMC } from "./ui";
 
 export function SignOutDialog({ onClose }: { onClose: () => void }) {
   const { board, tasks, apply } = useMC();
   const day = board.day!;
   const stats = useMemo(() => computeDayStats(board, tasks), [board, tasks]);
   const [notes, setNotes] = useState(day.notes ?? "");
-  const [unfinished, setUnfinished] = useState<"keep" | "return">("keep");
   const [saving, setSaving] = useState(false);
   const voice = useDictation(setNotes);
 
-  const open = new Map(tasks.map((t) => [t.id, t]));
-  const carried = day.plannedIds.map((id) => open.get(id)).filter(Boolean) as typeof tasks;
+  // Everything still in a lane, plus planned work that slipped out of one, goes back to the to-do list.
+  const planned = new Set(day.plannedIds);
+  const carried = tasks.filter((t) => !t.id.startsWith("tmp-") && (t.focus || planned.has(t.id)));
   const signedIn = day.signedIn ? new Date(day.signedIn) : null;
   const now = useNow();
   const minutes = signedIn && now ? Math.round((now - signedIn.getTime()) / 60000) : 0;
@@ -27,9 +28,16 @@ export function SignOutDialog({ onClose }: { onClose: () => void }) {
   async function confirm() {
     setSaving(true);
     voice.stop();
-    const returnIds = unfinished === "return" ? carried.map((t) => t.id) : [];
+    const returnIds = carried.map((t) => t.id);
+    const missedOn = day.date;
     const ok = await apply(
-      { changes: returnIds.map((id) => ({ id, patch: { focus: null, focusOrder: null } })), creates: [] },
+      {
+        changes: returnIds.map((id) => ({
+          id,
+          patch: { focus: null, focusOrder: null, idleSince: null, idleReminder: null, missedOn },
+        })),
+        creates: [],
+      },
       () => signOut(day.id, { ...stats, carriedOver: carried.length }, notes, returnIds),
     );
     setSaving(false);
@@ -37,7 +45,16 @@ export function SignOutDialog({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Modal title="Sign out for today" onClose={onClose} wide>
+    <Modal title="End your day" onClose={onClose} wide>
+      <div className="mb-4 flex items-center gap-3 rounded-2xl bg-warning/10 px-4 py-3 ring-1 ring-warning/30">
+        <Coins className="size-6 shrink-0 text-warning" />
+        <div>
+          <p className="text-sm font-semibold text-ink">
+            +{stats.done} token{stats.done === 1 ? "" : "s"} today
+          </p>
+          <p className="text-xs text-ink-3">One for every task you finished. See them grow in Tokens.</p>
+        </div>
+      </div>
       <div className="grid gap-3 sm:grid-cols-4">
         <Stat label="Done" value={stats.done} />
         <Stat label="Signal" value={stats.signalDone} tone="signal" />
@@ -72,22 +89,14 @@ export function SignOutDialog({ onClose }: { onClose: () => void }) {
         <dd className="text-ink-2">{fmtMinutes(stats.idleMinutes)}</dd>
       </dl>
 
-      {carried.length > 0 && (
+      {carried.length > 0 ? (
         <div className="mt-5 rounded-2xl p-4 glass-chip">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm font-semibold text-ink">
-              {carried.length} planned {carried.length === 1 ? "task" : "tasks"} not done
-            </p>
-            <Segmented
-              label="Unfinished planned tasks"
-              value={unfinished}
-              onChange={setUnfinished}
-              options={[
-                { value: "keep", label: "Keep for tomorrow" },
-                { value: "return", label: "Back to to-do" },
-              ]}
-            />
-          </div>
+          <p className="text-sm font-semibold text-ink">
+            {carried.length} unfinished {carried.length === 1 ? "task goes" : "tasks go"} back to the to-do list
+          </p>
+          <p className="mt-0.5 text-xs text-ink-3">
+            Today&apos;s lanes are cleared. Each one is marked &quot;missed {fmtDay(day.date)}&quot; so you can see what slipped.
+          </p>
           <ul className="mt-2.5 space-y-1 text-sm text-ink-2">
             {carried.slice(0, 8).map((t) => (
               <li key={t.id} className="truncate">· {t.name}</li>
@@ -95,7 +104,17 @@ export function SignOutDialog({ onClose }: { onClose: () => void }) {
             {carried.length > 8 && <li className="text-ink-3">+ {carried.length - 8} more</li>}
           </ul>
         </div>
+      ) : (
+        <p className="mt-5 rounded-2xl p-4 text-sm text-success glass-chip">Everything you planned is done. Clean slate for tomorrow.</p>
       )}
+
+      <Haiku
+        kind="day"
+        auto
+        items={board.doneToday.map((d) => d.name)}
+        note={`${stats.done} done (${stats.signalDone} signal, ${stats.noiseDone} noise), ${stats.plannedDone}/${stats.planned} of the plan, ${carried.length} unfinished, ${fmtMinutes(stats.idleMinutes)} idle`}
+        className="mt-4"
+      />
 
       <label className="mt-5 block">
         <span className="text-xs font-semibold text-ink-3">Notes on the day</span>
@@ -129,7 +148,7 @@ export function SignOutDialog({ onClose }: { onClose: () => void }) {
           disabled={saving}
           className="h-11 rounded-full bg-primary px-6 text-sm font-semibold text-white hover:bg-primary-hi disabled:opacity-40"
         >
-          {saving ? "Saving…" : "Sign out"}
+          {saving ? "Saving…" : "End my day"}
         </button>
       </div>
     </Modal>
@@ -147,3 +166,5 @@ function Stat({ label, value, tone }: { label: string; value: number | string; t
     </div>
   );
 }
+
+const fmtDay = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });

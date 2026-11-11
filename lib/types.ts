@@ -25,6 +25,7 @@ export type Task = {
   idleLog: string;
   doneAt: string | null;
   doneAs: "Signal" | "Noise" | null;
+  missedOn: string | null; // last day it was planned but not finished (YYYY-MM-DD)
   createdAt: string;
   editedAt: string;
 };
@@ -86,6 +87,7 @@ export type TaskPatch = Partial<
     | "idleLog"
     | "doneAt"
     | "doneAs"
+    | "missedOn"
   >
 >;
 

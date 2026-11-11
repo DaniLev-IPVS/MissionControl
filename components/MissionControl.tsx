@@ -28,6 +28,7 @@ import { DetailsDrawer } from "./DetailsDrawer";
 import { PlanView } from "./PlanView";
 import { SignOutDialog } from "./SignOutDialog";
 import { TimelineView } from "./TimelineView";
+import { TokensView } from "./TokensView";
 import { MainCard } from "./MainCard";
 import { QuickAdd } from "./QuickAdd";
 import { TaskCard } from "./TaskCard";
@@ -35,7 +36,7 @@ import { DeptChip, MCContext, Segmented, cx, deptHue, useMC, type MC } from "./u
 
 type TypeFilter = "all" | "signal" | "noise";
 type SortKey = "flow" | "priority" | "due" | "level";
-type View = "focus" | "plan" | "timeline" | "days";
+type View = "focus" | "plan" | "timeline" | "days" | "tokens";
 
 const PRIORITY_RANK: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
 const LEVEL_RANK: Record<string, number> = { project: 0, mission: 1, task: 2 };
@@ -288,16 +289,17 @@ export default function MissionControl() {
               { value: "plan", label: "Plan" },
               { value: "timeline", label: "Timeline" },
               { value: "days", label: "Days" },
+              { value: "tokens", label: "Tokens" },
             ]}
           />
           {planning && view === "plan" && (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/20 px-3 py-1.5 text-xs font-semibold text-primary-hi">
-              <Sunrise className="size-3.5" /> Signing in: pick today&apos;s tasks, then Start my day
+              <Sunrise className="size-3.5" /> Starting your day: pick from the recommendations, then Start my day
             </span>
           )}
         </nav>
 
-        {view !== "days" && (
+        {view !== "days" && view !== "tokens" && (
         <>
         {/* ---- Filters (folded behind a button on phones) ---- */}
         <button
@@ -423,6 +425,7 @@ export default function MissionControl() {
         )}
         {view === "timeline" && <TimelineView inDept={inDept} hideDone={hideDone} level={level} query={query} />}
         {view === "days" && <DaysView />}
+        {view === "tokens" && <TokensView />}
 
         {view === "focus" && (
         <>
@@ -777,9 +780,9 @@ function DayButton({
       <button
         onClick={onSignOut}
         className="inline-flex h-11 items-center gap-2 rounded-full px-4 text-sm font-semibold text-ink glass-chip hover:bg-white/12"
-        title="End the day and log it"
+        title="Sign out: log the day and clear today's lanes"
       >
-        <Sunset className="size-4 text-noise" /> Sign out
+        <Sunset className="size-4 text-noise" /> End your day
       </button>
     );
   return (
@@ -791,9 +794,9 @@ function DayButton({
           ? "bg-success/90 text-[#04210f] shadow-[0_8px_30px_-8px_rgb(7_202_107/0.8)] hover:bg-success"
           : "text-ink-2 glass-chip hover:text-ink",
       )}
-      title={state === "out" ? "Start the day: pick today's tasks" : "You signed out today. Sign back in?"}
+      title={state === "out" ? "Sign in: get recommendations and pick today's tasks" : "You ended today already. Start again?"}
     >
-      <Sunrise className="size-4" /> {state === "out" ? "Sign in" : "Sign back in"}
+      <Sunrise className="size-4" /> {state === "out" ? "Start your day" : "Restart your day"}
     </button>
   );
 }

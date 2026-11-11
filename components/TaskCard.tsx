@@ -45,6 +45,14 @@ export function TaskMeta({ task }: { task: Task }) {
         <span className="rounded-md bg-danger/18 px-1.5 py-0.5 text-[11px] font-semibold text-danger-hi">Blocked</span>
       )}
       {task.noise && <span className="rounded-md bg-noise/15 px-1.5 py-0.5 text-[11px] font-semibold text-noise">Pop-up</span>}
+      {task.missedOn && (
+        <span
+          title={`Planned for ${task.missedOn} but not finished`}
+          className="rounded-md bg-warning/12 px-1.5 py-0.5 text-[11px] font-semibold text-warning"
+        >
+          Missed {new Date(`${task.missedOn}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+        </span>
+      )}
       {task.estMin ? <span className="text-[11px] text-ink-3">~{task.estMin} min</span> : null}
     </div>
   );

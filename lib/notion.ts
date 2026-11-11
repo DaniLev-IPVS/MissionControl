@@ -129,6 +129,7 @@ function toTask(p: PageObjectResponse, oldNames: boolean, board: BoardKey = "per
     idleLog: plain(pr["Idle Log"]),
     doneAt: date(pr["Done At"]),
     doneAs: (select(pr["Done As"]) as Task["doneAs"]) ?? null,
+    missedOn: (date(pr["Missed On"]) ?? "").slice(0, 10) || null,
     createdAt: p.created_time,
     editedAt: p.last_edited_time,
   };
@@ -137,10 +138,11 @@ function toTask(p: PageObjectResponse, oldNames: boolean, board: BoardKey = "per
 // ---- Task State (Mission Control fields for shared-board tasks) -------------------
 type State = Pick<
   Task,
-  "focus" | "focusOrder" | "noise" | "idleSince" | "idleReminder" | "idleMinutes" | "idleLog" | "doneAt" | "doneAs"
+  | "focus" | "focusOrder" | "noise" | "idleSince" | "idleReminder" | "idleMinutes" | "idleLog" | "doneAt" | "doneAs"
+  | "missedOn"
 >;
 const STATE_KEYS = [
-  "focus", "focusOrder", "noise", "idleSince", "idleReminder", "idleMinutes", "idleLog", "doneAt", "doneAs",
+  "focus", "focusOrder", "noise", "idleSince", "idleReminder", "idleMinutes", "idleLog", "doneAt", "doneAs", "missedOn",
 ] as const satisfies readonly (keyof State)[];
 
 function toState(p: PageObjectResponse): State {
@@ -367,6 +369,7 @@ function patchToProperties(patch: TaskPatch, board: BoardKey = "personal") {
   if (patch.idleLog !== undefined) p["Idle Log"] = { rich_text: richText(patch.idleLog) };
   if (patch.doneAt !== undefined) p["Done At"] = { date: patch.doneAt ? { start: patch.doneAt } : null };
   if (patch.doneAs !== undefined) p["Done As"] = { select: patch.doneAs ? { name: patch.doneAs } : null };
+  if (patch.missedOn !== undefined) p["Missed On"] = { date: patch.missedOn ? { start: patch.missedOn } : null };
   return p;
 }
 

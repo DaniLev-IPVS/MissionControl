@@ -19,7 +19,7 @@ function seed(): Store {
     id: extra.id ?? `m${++n}`, url: "https://www.notion.so", name, status: "To Start", priority: "P1",
     level: "task", due: null, estMin: null, departmentIds: ["d-ops"], parentId: null, sprintId: "s-cur",
     focus: null, focusOrder: null, noise: false, idleSince: null, idleReminder: null, idleMinutes: 0,
-    idleLog: "", doneAt: null, doneAs: null, createdAt: now, editedAt: now, ...extra,
+    idleLog: "", doneAt: null, doneAs: null, missedOn: null, createdAt: now, editedAt: now, ...extra,
   });
   const ago = (d: number) => new Date(Date.now() - d * 86400000).toISOString();
   const fin = (name: string, parentId: string, dept: string, created: number, done: number): TreeTask => ({
@@ -108,7 +108,7 @@ export function mockCreate(t: NewTask): string {
     level: t.level, due: t.due ?? null, estMin: null, departmentIds: t.departmentIds ?? [],
     parentId: t.parentId ?? null, sprintId: "s-cur", focus: t.focus ?? null, focusOrder: t.focusOrder ?? null,
     noise: t.noise ?? false, idleSince: null, idleReminder: null, idleMinutes: 0, idleLog: "",
-    doneAt: null, doneAs: null, createdAt: now, editedAt: now,
+    doneAt: null, doneAs: null, missedOn: null, createdAt: now, editedAt: now,
   });
   return id;
 }

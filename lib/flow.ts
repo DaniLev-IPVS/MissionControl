@@ -285,7 +285,7 @@ export function draftTask(n: NewTask): Task {
     id: n.tempId, url: "", name: n.name, status: "To Start", priority: n.priority ?? null, level: n.level,
     due: n.due ?? null, estMin: null, departmentIds: n.departmentIds ?? [], parentId: n.parentId ?? null,
     sprintId: null, focus: n.focus ?? null, focusOrder: n.focusOrder ?? null, noise: n.noise ?? false,
-    idleSince: null, idleReminder: null, idleMinutes: 0, idleLog: "", doneAt: null, doneAs: null,
+    idleSince: null, idleReminder: null, idleMinutes: 0, idleLog: "", doneAt: null, doneAs: null, missedOn: null,
     createdAt: now, editedAt: now,
   };
 }

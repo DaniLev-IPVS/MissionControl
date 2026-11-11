@@ -19,8 +19,10 @@ import {
 import { signIn } from "@/app/actions";
 import { DASHBOARD_SLOTS, LEVEL_LABELS, TODAY_TARGET, isDoneStatus } from "@/lib/config";
 import { commitPlan, currentOrder, draftTask, isBlocked, slotFor } from "@/lib/flow";
+import { checkPlan } from "@/lib/days";
 import { useDictation } from "@/lib/hooks";
 import type { NewTask, Task, TreeTask } from "@/lib/types";
+import { Haiku } from "./Haiku";
 import { BoardBadge, DeptChip, DueBadge, LevelBadge, PriorityPill, cx, deptHue, useMC } from "./ui";
 
 const MAX_PLAN = 1 + DASHBOARD_SLOTS + TODAY_TARGET.max;
@@ -142,6 +144,7 @@ export function PlanView({
     if (ok) onDone();
   }
 
+  const check = useMemo(() => checkPlan(draft.map((id) => byId.get(id)).filter(Boolean) as Task[]), [draft, byId]);
   const nDash = Math.min(DASHBOARD_SLOTS, Math.max(0, draft.length - 1));
   const nToday = Math.max(0, draft.length - 1 - DASHBOARD_SLOTS);
 
@@ -158,6 +161,7 @@ export function PlanView({
           })
         }
         full={draft.length >= MAX_PLAN}
+        autoRun={planning}
       />
 
       {/* ---- Tree ---- */}
@@ -304,6 +308,40 @@ export function PlanView({
             </span>
           </div>
 
+          {check && (
+            <div
+              role="status"
+              className={cx(
+                "mt-4 rounded-2xl px-3.5 py-3 ring-1",
+                {
+                  danger: "bg-danger/12 ring-danger/35",
+                  warning: "bg-warning/10 ring-warning/30",
+                  success: "bg-success/10 ring-success/30",
+                  signal: "bg-primary/12 ring-primary/30",
+                }[check.tone],
+              )}
+            >
+              <p
+                className={cx(
+                  "text-sm font-semibold",
+                  { danger: "text-danger-hi", warning: "text-warning", success: "text-success", signal: "text-primary-hi" }[check.tone],
+                )}
+              >
+                {check.title}
+              </p>
+              <p className="mt-0.5 text-xs text-ink-2">{check.detail}</p>
+            </div>
+          )}
+          {draft.length > 0 && (
+            <Haiku
+              key={draft.join(",")}
+              kind="plan"
+              items={draft.map((id) => byId.get(id)?.name ?? "").filter(Boolean)}
+              note={check ? `${check.title}: ${check.detail}` : undefined}
+              className="mt-3"
+            />
+          )}
+
           <div className="mt-4 flex gap-2">
             <button
               onClick={() => setDraft(currentOrder(tasks, today))}
@@ -347,7 +385,7 @@ function fromTree(t: TreeTask): Task {
   return {
     ...t,
     priority: null, estMin: null, sprintId: null, focus: null, focusOrder: null, noise: false, idleSince: null,
-    idleReminder: null, idleMinutes: 0, idleLog: "", doneAs: null, editedAt: t.doneAt ?? t.createdAt,
+    idleReminder: null, idleMinutes: 0, idleLog: "", doneAs: null, missedOn: null, editedAt: t.doneAt ?? t.createdAt,
   };
 }
 
@@ -484,12 +522,14 @@ function Recommendations({
   toggle,
   addAll,
   full,
+  autoRun = false,
 }: {
   byId: Map<string, Task>;
   inPlan: Map<string, number>;
   toggle: (id: string) => void;
   addAll: (ids: string[]) => void;
   full: boolean;
+  autoRun?: boolean; // Start your day: fetch recommendations straight away
 }) {
   const { deptName, titleOf } = useMC();
   const [picks, setPicks] = useState<Rec[] | null>(null);
@@ -516,6 +556,13 @@ function Recommendations({
       setBusy(false);
     }
   }
+
+  const started = useRef(false);
+  useEffect(() => {
+    if (!autoRun || started.current) return;
+    started.current = true;
+    void run();
+  }, [autoRun]);
 
   // Group by the top of each pick's chain: Project › Mission › Task.
   const groups = useMemo(() => {

@@ -44,13 +44,19 @@ const Recommendation = z.object({
 
 export async function POST(request: Request) {
   await connection();
-  let body: { messages?: Msg[]; draft?: string[]; recommend?: boolean };
+  let body: {
+    messages?: Msg[];
+    draft?: string[];
+    recommend?: boolean;
+    haiku?: { kind: "plan" | "day"; items: string[]; note?: string };
+  };
   try {
     body = await request.json();
   } catch {
     return Response.json({ error: "bad json" }, { status: 400 });
   }
   if (body.recommend) return recommend();
+  if (body.haiku) return haiku(body.haiku);
 
   const messages = (body.messages ?? [])
     .filter((m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
@@ -143,6 +149,47 @@ Current draft order: ${draft.map((id) => aliasOf.get(id)).join(", ") || "(empty)
   } catch (err) {
     console.error("planner failed", err);
     return Response.json({ error: "The planner couldn't answer. Try again, or plan by dragging." }, { status: 502 });
+  }
+}
+
+// ---- A haiku about the plan (morning) or the finished day (sign out) ----------------------
+const Haiku = z.object({
+  lines: z.array(z.string()).describe("Exactly three lines, 5-7-5 syllables"),
+  insight: z.string().describe("One short, honest sentence of analysis behind the haiku"),
+});
+
+async function haiku(input: { kind: "plan" | "day"; items: string[]; note?: string }) {
+  const kind = input.kind === "day" ? "day" : "plan";
+  const items = (input.items ?? []).filter((x) => typeof x === "string").slice(0, 20).map((x) => x.slice(0, 160));
+  const note = typeof input.note === "string" ? input.note.slice(0, 400) : "";
+  const fallback = () =>
+    Response.json(
+      kind === "plan"
+        ? {
+            lines: [`${items.length} stones on the path`, "the first one sets the rhythm", "noise waits by the door"],
+            insight: note || "Start with Main and let the rest wait their turn.",
+          }
+        : {
+            lines: ["the lanes are empty", `${items.length} small fires put out today`, "tomorrow, fresh coals"],
+            insight: note || "Logged and cleared. Unfinished work is back on the list.",
+          },
+    );
+  if (!(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN)) return fallback();
+  try {
+    const { output } = await generateText({
+      model: PLANNER_MODEL,
+      system:
+        "You write one haiku (5-7-5) about someone's workday, warm and a little wry, then one honest sentence of analysis. No emojis.",
+      prompt:
+        kind === "plan"
+          ? `Today's plan, in order:\n${items.map((x, i) => `${i + 1}. ${x}`).join("\n")}\n${note ? `Load check: ${note}` : ""}`
+          : `What got done today:\n${items.map((x) => `- ${x}`).join("\n") || "(nothing)"}\n${note ? `Stats: ${note}` : ""}`,
+      output: Output.object({ schema: Haiku }),
+    });
+    return Response.json({ lines: output.lines.slice(0, 3), insight: output.insight });
+  } catch (err) {
+    console.error("haiku failed", err);
+    return fallback();
   }
 }
 
