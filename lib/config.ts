@@ -12,9 +12,12 @@ export const DEPARTMENTS_DATA_SOURCE_ID =
 export const INFLUITY_TASKS_DATA_SOURCE_ID =
   process.env.NOTION_INFLUITY_DATA_SOURCE_ID ?? "0d95c9cd-9cf0-4419-b9a5-8a3e3a7f3075";
 // Lanes / Signal-Noise / idle state for shared-board tasks, kept in the private
-// Mission Control page so the shared board needs no extra columns.
+// Mission Control data row (Personal board) so the shared board needs no extra columns.
 export const TASK_STATE_DATA_SOURCE_ID =
   process.env.NOTION_TASK_STATE_DATA_SOURCE_ID ?? "c02dca98-5938-4ffe-bc62-95470c727744";
+// The Personal board row that holds Mission Control's own databases (Days, Task State).
+// Kept there so the integration reaches them without an extra share; hidden in the site.
+export const MC_DATA_PAGE_ID = process.env.NOTION_MC_DATA_PAGE_ID ?? "41563a9c-0965-811d-9217-ff907b3001e8";
 // New tasks are assigned to this Notion user so they show in "assigned to me" views.
 export const DEFAULT_ASSIGNEE_ID =
   process.env.NOTION_DEFAULT_ASSIGNEE_ID ?? "e89eed68-ee97-4241-ab9b-7588b0e4bad8";

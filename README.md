@@ -21,7 +21,7 @@ The flow rules live in `lib/flow.ts` as pure functions. Each action returns the 
 
 ## The workday: Sign in / Sign out
 
-- **Sign in** opens the **Plan** view. You build today's ordered plan in any of three ways: tick or drag items in the Department › Project › Mission › Task tree, reorder the plan list, or tell the **Planner** what today is about (typed or by voice). **Start my day** writes the lanes (#1 → Main, the next 3 → Task switch, the rest → Today) and opens today's row in **Mission Control Days**.
+- **Start your day** (sign in) opens the **Plan** view with today's recommendations. You build today's ordered plan in any of three ways: tick or drag items in the Department › Project › Mission › Task tree, reorder the plan list, or tell the **Planner** what today is about (typed or by voice). **Start my day** writes the lanes (#1 → Main, the next 3 → Task switch, the rest → Today) and opens today's row in **Mission Control Days**.
 - **Sign out** shows the day's numbers: done, Signal vs Noise, planned done, idle time and carried-over tasks. You can add notes, keep unfinished work for tomorrow or send it back to the to-do list, and the stats are saved to the day's row.
 - When a task is marked done it gets `Done At` and `Done As` (Signal if it was planned and not a pop-up, otherwise Noise).
 - **Days** charts the last 14 days. **Timeline** is a Gantt of every project and mission, filled by the share of its tasks that are done.
@@ -75,7 +75,9 @@ To use real data, copy `.env.example` to `.env.local` and fill it in.
    - Personal Sprint Work Board / Personal Ticket Board
    - Sprints
    - Departments (formerly My Projects, so department names show up)
-   - The **Mission Control** page, which holds the Mission Control Days database (the day log)
+   - Influity Task Board (only tasks assigned to Dani Lev are shown)
+
+   Mission Control's own databases (**Mission Control Days**, the day log, and **Mission Control Task State**, lanes for shared-board tasks) live inside the hidden "Mission Control data" row on the Personal Ticket Board, so they need no extra share.
 3. **Set the Vercel environment variables** (Production and Preview):
    ```bash
    vercel env add NOTION_TOKEN

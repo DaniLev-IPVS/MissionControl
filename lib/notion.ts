@@ -7,6 +7,7 @@ import {
   DEPARTMENTS_DATA_SOURCE_ID,
   FOCUS_NOTION,
   INFLUITY_TASKS_DATA_SOURCE_ID,
+  MC_DATA_PAGE_ID,
   MY_USER_IDS,
   SPRINTS_DATA_SOURCE_ID,
   TASKS_DATA_SOURCE_ID,
@@ -45,6 +46,8 @@ function titleOf(page: PageObjectResponse) {
   return plain(prop) || "Untitled";
 }
 
+const HIDDEN = MC_DATA_PAGE_ID.replace(/-/g, "").toLowerCase();
+
 async function queryAll(dataSourceId: string, filter?: object, pageSize = 100, max = Infinity) {
   const pages: PageObjectResponse[] = [];
   let cursor: string | undefined;
@@ -56,7 +59,7 @@ async function queryAll(dataSourceId: string, filter?: object, pageSize = 100, m
       page_size: pageSize,
       start_cursor: cursor,
     });
-    for (const r of res.results) if (isFullPage(r)) pages.push(r);
+    for (const r of res.results) if (isFullPage(r) && normalizeId(r.id) !== HIDDEN) pages.push(r);
     cursor = res.has_more && pages.length < max ? (res.next_cursor ?? undefined) : undefined;
   } while (cursor);
   return pages;
@@ -272,7 +275,7 @@ export async function fetchDaysSafe(sinceDay: string): Promise<Soft<Day[]>> {
   try {
     return { value: await fetchDays(sinceDay), warnings: [] };
   } catch (err) {
-    return { value: [], warnings: [accessWarning("Mission Control Days (inside the Mission Control page)", err)] };
+    return { value: [], warnings: [accessWarning("Mission Control Days (inside the Mission Control data row on your Personal board)", err)] };
   }
 }
 
@@ -491,8 +494,8 @@ const SOURCES = [
   ["Departments", DEPARTMENTS_DATA_SOURCE_ID],
   ["Sprints", SPRINTS_DATA_SOURCE_ID],
   ["Influity Task Board", INFLUITY_TASKS_DATA_SOURCE_ID],
-  ["Mission Control Days (inside the Mission Control page)", DAYS_DATA_SOURCE_ID],
-  ["Mission Control Task State (inside the Mission Control page)", TASK_STATE_DATA_SOURCE_ID],
+  ["Mission Control Days (inside the Mission Control data row on your Personal board)", DAYS_DATA_SOURCE_ID],
+  ["Mission Control Task State (inside the Mission Control data row on your Personal board)", TASK_STATE_DATA_SOURCE_ID],
 ] as const;
 
 let lastDiagnosis: { at: number; message: string } | null = null;
