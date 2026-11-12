@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  AlarmClock,
   CheckCheck,
   Layers,
   LogOut,
@@ -18,8 +17,8 @@ import {
   Waves,
   Zap,
 } from "lucide-react";
-import { DASHBOARD_SLOTS, LEVELS, LEVEL_LABELS, TODAY_TARGET, isDoneStatus, type Level } from "@/lib/config";
-import { localDay, lowestLevel, makeMain, moveTo, resumeIdle, sections, snooze, type Lane } from "@/lib/flow";
+import { LEVELS, LEVEL_LABELS, TODAY_TARGET, isDoneStatus, type Level } from "@/lib/config";
+import { isIdle, localDay, lowestLevel, makeMain, moveTo, sections, type Lane } from "@/lib/flow";
 import { useNow, useReminders } from "@/lib/hooks";
 import type { Task } from "@/lib/types";
 import { useBoard } from "@/lib/useBoard";
@@ -27,6 +26,8 @@ import { logout } from "@/app/actions";
 import { CompanyView } from "./CompanyView";
 import { DaysView } from "./DaysView";
 import { DetailsDrawer } from "./DetailsDrawer";
+import { IdleBoard } from "./IdleBoard";
+import { NotificationBell, ReminderToasts } from "./Notifications";
 import { PlanView } from "./PlanView";
 import { PopupBar } from "./PopupBar";
 import { SignOutDialog } from "./SignOutDialog";
@@ -82,7 +83,7 @@ export default function MissionControl() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const { due: reminders, dismiss } = useReminders(tasks);
+  const reminders = useReminders(tasks);
 
   const ctx: MC | null = useMemo(() => {
     if (!board) return null;
@@ -195,10 +196,15 @@ export default function MissionControl() {
   const age = lastSync && nowMs ? Math.round((nowMs - lastSync) / 1000) : null;
   const detailsTask = detailsId ? tasks.find((t) => t.id === detailsId) : undefined;
 
-  const dashboard = sorted(s.dashboard);
-  const todayList = sorted(s.today);
+  // Idle work (handed to AI) lives on the Idle board, not in its lane.
+  const active = (t: Task) => !isIdle(t);
+  const byIdleStart = (a: Task, b: Task) => (a.idleSince ?? "").localeCompare(b.idleSince ?? "");
+  const idleSignal = s.dashboard.concat(s.today).filter(isIdle).filter(visible).sort(byIdleStart);
+  const idleNoise = s.detour.filter(isIdle).filter(visible).sort(byIdleStart);
+  const dashboard = sorted(s.dashboard.filter(active));
+  const todayList = sorted(s.today.filter(active));
   const noise = sorted(s.noise, noiseFallback);
-  const detour = sorted(s.detour);
+  const detour = sorted(s.detour.filter(active));
   const backlog = sorted(s.backlog, backlogFallback);
 
   return (
@@ -452,14 +458,16 @@ export default function MissionControl() {
               if (t) apply(makeMain(tasks, t, today));
             }} />
 
+            <IdleBoard signal={idleSignal} noise={idleNoise} showSignal={showSignal} showNoise={showNoise} />
+
             {showSignal && (
               <LaneSection
                 lane="dashboard"
                 itemCount={dashboard.length}
                 icon={<Radio className="size-4" />}
-                title="Task switch"
-                subtitle="Next in line · work on these while Main is idle"
-                count={`${s.dashboard.length}/${DASHBOARD_SLOTS}`}
+                title="Next in line"
+                subtitle="The task switch · work on these while Main is handed off"
+                count={`${dashboard.length}`}
                 tone="signal"
                 onDrop={drop}
                 dragging={!!dragId}
@@ -520,14 +528,14 @@ export default function MissionControl() {
           </div>
 
           <div className="space-y-5 xl:col-span-4">
-            {showNoise && s.detour.length > 0 && (
+            {showNoise && detour.length > 0 && (
               <LaneSection
                 lane="detour"
                 itemCount={detour.length}
                 icon={<Flame className="size-4" />}
                 title="Working on noise"
                 subtitle="Not signal. You chose this over what you should be working on."
-                count={`${s.detour.length}`}
+                count={`${detour.length}`}
                 tone="noise"
                 strong
                 onDrop={drop}
@@ -600,33 +608,7 @@ export default function MissionControl() {
 
       {/* ---- Overlays ---- */}
       <div className="fixed inset-x-4 bottom-4 z-40 mx-auto flex max-w-md flex-col gap-2" aria-live="assertive">
-        {reminders.map((t) => (
-          <div key={t.id} className="animate-pop flex items-center gap-3 rounded-2xl p-3.5 glass-float ring-1 ring-warning/40">
-            <AlarmClock className="size-5 shrink-0 text-warning" />
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-semibold text-warning">Check the session</p>
-              <p className="truncate text-sm text-ink">{t.name}</p>
-            </div>
-            <button
-              onClick={() => {
-                dismiss(t);
-                apply(resumeIdle(tasks, t, today));
-              }}
-              className="h-9 rounded-full bg-primary px-3.5 text-xs font-semibold text-white"
-            >
-              Back to it
-            </button>
-            <button
-              onClick={() => {
-                dismiss(t);
-                apply(snooze(t, 5));
-              }}
-              className="h-9 rounded-full px-3 text-xs font-semibold text-ink-2 glass-chip"
-            >
-              +5 min
-            </button>
-          </div>
-        ))}
+        <ReminderToasts {...reminders} />
         {saveError && (
           <div role="alert" className="animate-pop flex items-center gap-3 rounded-2xl p-3.5 glass-float ring-1 ring-danger/40">
             <p className="flex-1 text-sm text-ink">{saveError}</p>
@@ -637,6 +619,7 @@ export default function MissionControl() {
         )}
       </div>
 
+      <NotificationBell {...reminders} />
       {detailsTask && <DetailsDrawer task={detailsTask} onClose={() => setDetailsId(null)} />}
       {signingOut && board!.day && <SignOutDialog onClose={() => setSigningOut(false)} />}
       {adding && <QuickAdd onClose={() => setAdding(null)} startListening={adding === "voice"} />}

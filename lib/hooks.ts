@@ -146,7 +146,7 @@ export function askNotificationPermission() {
   }
 }
 
-const reminderKey = (t: Task) => `${t.id}:${t.idleReminder}`;
+export const reminderKey = (t: Task) => `${t.id}:${t.idleReminder}`;
 
 /**
  * Idle tasks whose reminder time has passed (until dismissed). Rings once per
@@ -184,5 +184,7 @@ export function useReminders(tasks: Task[]) {
     (t: Task) => setDismissed((d) => new Set(d).add(reminderKey(t))),
     [],
   );
-  return { due, dismiss };
+  // A reminder's due time is when it first rang: after a few minutes as a toast it moves to the bell.
+  const dueAt = useCallback((t: Task) => (t.idleReminder ? Date.parse(t.idleReminder) : 0), []);
+  return { due, dismiss, dueAt };
 }

@@ -217,7 +217,7 @@ export function done(tasks: Task[], task: Task, today: string, now = new Date())
 export function blocked(tasks: Task[], task: Task, today: string): Plan {
   const s = sections(tasks, today);
   return finish(tasks, today, [
-    { id: task.id, patch: { status: "Blocked", focus: "today", focusOrder: maxOrder(s.today) + 1 } },
+    { id: task.id, patch: { ...closeIdle(task), status: "Blocked", focus: "today", focusOrder: maxOrder(s.today) + 1 } },
   ]);
 }
 
@@ -226,8 +226,8 @@ export function markBlocked(tasks: Task[], task: Task, today: string): Plan {
   if (isSignal(task)) return blocked(tasks, task, today);
   // Blocked noise you were working on drops back to the noise that came up.
   if (task.focus === "detour")
-    return finish(tasks, today, [{ id: task.id, patch: { status: "Blocked", focus: null, focusOrder: null } }]);
-  return finish(tasks, today, [{ id: task.id, patch: { status: "Blocked" } }]);
+    return finish(tasks, today, [{ id: task.id, patch: { ...closeIdle(task), status: "Blocked", focus: null, focusOrder: null } }]);
+  return finish(tasks, today, [{ id: task.id, patch: { ...closeIdle(task), status: "Blocked" } }]);
 }
 
 /**

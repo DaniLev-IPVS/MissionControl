@@ -161,3 +161,17 @@ select, input[type="date"], input[type="number"] { color-scheme: dark; }
 @media (prefers-reduced-motion: reduce) {
   .mc-bounce, .mc-word, .mc-dots::after { animation: none; }
 }
+
+/* Notification bell: a bounce and a wiggle every few seconds while something needs you. */
+@keyframes bell-nudge {
+  0%, 30%, 100% { transform: translateY(0) rotate(0); }
+  4% { transform: translateY(-7px) rotate(-12deg); }
+  8% { transform: translateY(0) rotate(10deg); }
+  12% { transform: translateY(-4px) rotate(-8deg); }
+  16% { transform: translateY(0) rotate(5deg); }
+  20% { transform: translateY(-1px) rotate(-2deg); }
+}
+.animate-bell { animation: bell-nudge 3.5s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .animate-bell { animation: none; }
+}
