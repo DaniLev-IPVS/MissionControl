@@ -237,7 +237,7 @@ async function recommend() {
       t.priority ?? "",
       t.due ? `due ${t.due}` : "",
       t.status ?? "",
-      t.focus ? `already planned (${t.focus})` : "",
+      t.focus === "detour" ? "being worked on as noise (not planned)" : t.focus ? `already planned (${t.focus})` : "",
       hasKids.has(t.id) ? "has open sub-items" : "",
     ]
       .filter(Boolean)

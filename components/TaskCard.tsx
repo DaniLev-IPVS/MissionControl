@@ -1,9 +1,21 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Ban, Check, ChevronDown, CornerDownRight, GripVertical, Info, Play, Undo2 } from "lucide-react";
+import { ArrowUpRight, Ban, Check, ChevronDown, CornerDownRight, GripVertical, Info, Play, Undo2, Waves } from "lucide-react";
 import { LEVEL_LABELS } from "@/lib/config";
-import { isBlocked, laneOf, makeMain, markBlocked, moveTo, unblock, type Lane } from "@/lib/flow";
+import {
+  backToNoise,
+  isBlocked,
+  isPopupSignal,
+  laneOf,
+  makeMain,
+  markBlocked,
+  moveTo,
+  sendToSignal,
+  unblock,
+  workOnNoise,
+  type Lane,
+} from "@/lib/flow";
 import type { Task } from "@/lib/types";
 import { BoardBadge, DeptChip, DueBadge, IdleTimer, LevelBadge, PriorityPill, cx, markDone, useMC } from "./ui";
 
@@ -11,6 +23,7 @@ export const LANE_LABELS: Record<Lane, string> = {
   main: "Main",
   dashboard: "Dashboard",
   today: "Today",
+  detour: "Working on noise",
   noise: "Noise",
   backlog: "To-do list",
 };
@@ -44,7 +57,16 @@ export function TaskMeta({ task }: { task: Task }) {
       {isBlocked(task) && (
         <span className="rounded-md bg-danger/18 px-1.5 py-0.5 text-[11px] font-semibold text-danger-hi">Blocked</span>
       )}
-      {task.noise && <span className="rounded-md bg-noise/15 px-1.5 py-0.5 text-[11px] font-semibold text-noise">Pop-up</span>}
+      {isPopupSignal(task) ? (
+        <span
+          title="Came up during the day and wasn't in the plan. You sent it to signal."
+          className="rounded-md bg-popup/15 px-1.5 py-0.5 text-[11px] font-semibold text-popup ring-1 ring-popup/35"
+        >
+          Pop-up
+        </span>
+      ) : (
+        task.noise && <span className="rounded-md bg-noise/15 px-1.5 py-0.5 text-[11px] font-semibold text-noise">Pop-up</span>
+      )}
       {task.missedOn && (
         <span
           title={`Planned for ${task.missedOn} but not finished`}
@@ -72,6 +94,7 @@ export function TaskCard({
   const { tasks, today, apply, openDetails } = useMC();
   const lane = laneOf(task, today);
   const pendingSave = task.id.startsWith("tmp-");
+  const popup = isPopupSignal(task);
 
   return (
     <article
@@ -87,6 +110,10 @@ export function TaskCard({
         "group relative rounded-2xl glass transition-[transform,background] duration-150 focus-within:z-20 hover:z-10 hover:-translate-y-px hover:bg-white/[0.07]",
         dense ? "p-3" : "p-3.5",
         pendingSave && "opacity-60",
+        // A pop-up that was sent to signal: part of the plan now, but it wasn't in it this morning.
+        // (`glass` sets its own background and border, hence the important modifier.)
+        popup && "border-popup/50! bg-popup/[0.08]!",
+        lane === "detour" && "border-noise/50! bg-noise/[0.09]!",
         isBlocked(task) && "ring-1 ring-danger/30",
       )}
     >
@@ -101,7 +128,34 @@ export function TaskCard({
       </div>
 
       <div className="mt-2.5 flex flex-wrap items-center justify-end gap-1">
-        {isBlocked(task) ? (
+        {lane === "noise" || lane === "detour" ? (
+          // Noise gets a decision, not a Start button: work on it as noise, or make it signal.
+          <>
+            {lane === "noise" ? (
+              <CardButton
+                onClick={() => apply(workOnNoise(tasks, task, today))}
+                label={`Work on "${task.name}" now, as noise. Main stays what you should be working on.`}
+                tone="noise"
+              >
+                <Play className="size-3.5" /> Work on it
+              </CardButton>
+            ) : (
+              <CardButton
+                onClick={() => apply(backToNoise(tasks, task, today))}
+                label={`Stop working on "${task.name}" and leave it in Noise`}
+              >
+                <Undo2 className="size-3.5" /> Put down
+              </CardButton>
+            )}
+            <CardButton
+              onClick={() => apply(sendToSignal(tasks, task, today))}
+              label={`Send "${task.name}" to signal: it joins Today, marked as a pop-up`}
+              primary
+            >
+              <ArrowUpRight className="size-3.5" /> To signal
+            </CardButton>
+          </>
+        ) : isBlocked(task) ? (
           <CardButton onClick={() => apply(unblock(tasks, task, today))} label="Unblock">
             <Undo2 className="size-3.5" /> Unblock
           </CardButton>
@@ -114,6 +168,11 @@ export function TaskCard({
               <Ban className="size-3.5" /> Blocked
             </CardButton>
           </>
+        )}
+        {popup && (
+          <CardButton onClick={() => apply(backToNoise(tasks, task, today))} label={`Move "${task.name}" out of signal, back to Noise`} tone="noise">
+            <Waves className="size-3.5" /> To noise
+          </CardButton>
         )}
         <CardButton onClick={() => markDone({ tasks, today, apply }, task)} label={`Mark "${task.name}" done`} tone="success">
           <Check className="size-3.5" /> Done
@@ -138,7 +197,7 @@ function CardButton({
   onClick: () => void;
   label: string;
   primary?: boolean;
-  tone?: "success" | "danger";
+  tone?: "success" | "danger" | "noise";
 }) {
   return (
     <button
@@ -153,7 +212,9 @@ function CardButton({
             ? "text-success hover:bg-success/15"
             : tone === "danger"
               ? "text-danger-hi hover:bg-danger/15"
-              : "text-ink-3 hover:bg-white/10 hover:text-ink",
+              : tone === "noise"
+                ? "bg-noise/15 text-noise hover:bg-noise/30"
+                : "text-ink-3 hover:bg-white/10 hover:text-ink",
       )}
     >
       {children}

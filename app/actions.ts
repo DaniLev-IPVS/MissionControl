@@ -179,18 +179,22 @@ export async function signIn(changes: Change[], creates: NewTask[], order: strin
 }
 
 /** End the day: save the stats and notes, and flush today's lanes. Unfinished work goes back to
- *  the to-do list marked with the day it was missed. */
-export async function signOut(dayId: string, stats: DayStats, notes: string, returnIds: string[]) {
-  if (!ID.test(dayId) || returnIds.some((id) => !ID.test(id))) throw new Error("Bad id");
+ *  the to-do list marked with the day it was missed. `dropIds` (noise that was being worked on)
+ *  leave their lane too, but were never planned, so they aren't marked as missed. */
+export async function signOut(dayId: string, stats: DayStats, notes: string, returnIds: string[], dropIds: string[] = []) {
+  if (!ID.test(dayId) || [...returnIds, ...dropIds].some((id) => !ID.test(id))) throw new Error("Bad id");
   const nums = ["planned", "done", "signalDone", "noiseDone", "plannedDone", "carriedOver", "idleMinutes"] as const;
   for (const k of nums) if (!Number.isFinite(stats[k]) || stats[k] < 0) throw new Error(`Bad ${k}`);
   if (stats.doneIds.some((id) => !ID.test(id))) throw new Error("Bad done id");
   if (typeof notes !== "string" || notes.length > 2000) throw new Error("Bad notes");
 
-  if (returnIds.length) {
+  if (returnIds.length || dropIds.length) {
     const missedOn = todayInZone();
     const { errors } = await writeChanges(
-      returnIds.map((id) => ({ id, patch: { ...FLUSH, missedOn } })),
+      [
+        ...returnIds.map((id) => ({ id, patch: { ...FLUSH, missedOn } })),
+        ...dropIds.map((id) => ({ id, patch: FLUSH })),
+      ],
       [],
     );
     if (errors.length) throw new Error(errors[0]);

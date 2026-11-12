@@ -7,6 +7,7 @@ import {
   Layers,
   LogOut,
   ListTodo,
+  Flame,
   Mic,
   Plus,
   Radio,
@@ -27,6 +28,7 @@ import { CompanyView } from "./CompanyView";
 import { DaysView } from "./DaysView";
 import { DetailsDrawer } from "./DetailsDrawer";
 import { PlanView } from "./PlanView";
+import { PopupBar } from "./PopupBar";
 import { SignOutDialog } from "./SignOutDialog";
 import { TimelineView } from "./TimelineView";
 import { TokensView } from "./TokensView";
@@ -149,7 +151,12 @@ export default function MissionControl() {
   const backlogFallback = (a: Task, b: Task) =>
     (PRIORITY_RANK[a.priority ?? ""] ?? 9) - (PRIORITY_RANK[b.priority ?? ""] ?? 9) ||
     (a.due ?? "9999").localeCompare(b.due ?? "9999");
-  const noiseFallback = (a: Task, b: Task) => (a.due ?? "9999").localeCompare(b.due ?? "9999") || backlogFallback(a, b);
+  // What just came up sits on top (newest first); close due dates follow, soonest first.
+  const noiseFallback = (a: Task, b: Task) =>
+    Number(b.noise) - Number(a.noise) ||
+    (a.noise && b.noise ? b.createdAt.localeCompare(a.createdAt) : 0) ||
+    (a.due ?? "9999").localeCompare(b.due ?? "9999") ||
+    backlogFallback(a, b);
 
   // Drag and drop between lanes.
   const drop = useCallback(
@@ -181,7 +188,7 @@ export default function MissionControl() {
     Number(type !== "all") + Number(level !== "all") + Number(lowest) + Number(sort !== "flow") + Number(!!query) + depts.size +
     Number(!hideDone);
   const signalCount = (s.main ? 1 : 0) + s.dashboard.length + s.today.length;
-  const noiseCount = s.noise.length;
+  const noiseCount = s.noise.length + s.detour.length;
   const showSignal = type !== "noise";
   const showNoise = type !== "signal";
   const showBacklog = type === "all";
@@ -191,6 +198,7 @@ export default function MissionControl() {
   const dashboard = sorted(s.dashboard);
   const todayList = sorted(s.today);
   const noise = sorted(s.noise, noiseFallback);
+  const detour = sorted(s.detour);
   const backlog = sorted(s.backlog, backlogFallback);
 
   return (
@@ -265,6 +273,9 @@ export default function MissionControl() {
             </form>
           </div>
         </header>
+
+        {/* ---- Pop-ups: one line, filed for you, lands in Noise ---- */}
+        <PopupBar />
 
         {board?.warnings?.length ? (
           <div role="status" className="rounded-2xl px-4 py-3 text-sm text-ink-2 glass ring-1 ring-warning/40">
@@ -509,13 +520,35 @@ export default function MissionControl() {
           </div>
 
           <div className="space-y-5 xl:col-span-4">
+            {showNoise && s.detour.length > 0 && (
+              <LaneSection
+                lane="detour"
+                itemCount={detour.length}
+                icon={<Flame className="size-4" />}
+                title="Working on noise"
+                subtitle="Not signal. You chose this over what you should be working on."
+                count={`${s.detour.length}`}
+                tone="noise"
+                strong
+                onDrop={drop}
+                dragging={!!dragId}
+                empty="Nothing here."
+              >
+                <div className="space-y-2.5">
+                  {detour.map((t, i) => (
+                    <TaskCard key={t.id} task={t} index={i} onDragStart={setDragId} dense />
+                  ))}
+                </div>
+              </LaneSection>
+            )}
+
             {showNoise && (
               <LaneSection
                 lane="noise"
                 itemCount={noise.length}
                 icon={<Waves className="size-4" />}
-                title="Noise"
-                subtitle="Unplanned: pop-ups and close due dates"
+                title="Noise that came up"
+                subtitle="Unplanned: pop-ups and close due dates. Work on it as noise, or send it to signal."
                 count={`${s.noise.length}`}
                 tone="noise"
                 onDrop={drop}
@@ -671,8 +704,10 @@ function LaneSection({
   dragging,
   empty,
   itemCount,
+  strong = false,
 }: {
   itemCount: number;
+  strong?: boolean; // louder tint and outline (Working on noise)
   lane: Lane;
   icon: ReactNode;
   title: string;
@@ -712,7 +747,7 @@ function LaneSection({
       }}
       className={cx(
         "relative rounded-[26px] p-4 sm:p-5 glass transition-shadow focus-within:z-20",
-        tone === "noise" && "bg-noise/[0.035]",
+        tone === "noise" && (strong ? "border-noise/45! bg-noise/[0.07]!" : "bg-noise/[0.035]"),
         over && dragging && "ring-2 ring-primary-hi/70",
       )}
     >

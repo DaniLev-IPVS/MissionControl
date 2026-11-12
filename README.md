@@ -6,16 +6,20 @@ A website version of the **Personal Sprint Work Board** in Notion. Notion stays 
 
 | Lane | What it holds | Notion `Focus` |
 | --- | --- | --- |
-| **Currently working on** | The single main task, with Split, Done, Blocked and Idle buttons | `Main` |
+| **This is what you should be working on** | The single main task, with Split, Done, Blocked and Idle buttons | `Main` |
 | **Task switch** | 3 tasks that are next in line, worked on while Main is idle | `Dashboard` |
 | **Today** | 2–6 planned tasks that feed the task switch | `Today` |
-| **Noise** | Unplanned pop-ups (`Noise` ticked) and tasks due within 2 days | empty |
+| **Working on noise** | A pop-up you chose to work on anyway. It sits beside Main, never in it | `Working on noise` |
+| **Noise that came up** | Unplanned pop-ups (`Noise` ticked) and tasks due within 2 days | empty |
 | **To-do list** | Everything else | empty |
 
 - Tasks flow upward in `Focus Order`. When Main finishes (Done), gets stuck (Blocked) or goes Idle, the next free Task switch task moves up and Today refills the Task switch.
 - **Idle** starts a timer (`Idle Since`) and an optional reminder (`Idle Reminder`). When the task returns to Main, the time is added to `Idle Minutes` and logged in `Idle Log`.
 - **Split** breaks a task into sibling tasks, or a project or mission into children.
 - Levels are Project › Mission › Task, and tasks are grouped by **Departments**.
+- **Pop-ups**: the bar at the top takes one line (typed or dictated, `/` jumps to it). `/api/popup` picks the mission and department it belongs to, and the task is added to **Noise that came up**. The plan is not touched.
+- Each noise card asks for a decision. **Work on it** moves it to **Working on noise** (Main keeps showing the planned task, with a note that you're on noise). **To signal** adds it to Today; it keeps its `Noise` tick, which is what gives it the yellow pop-up highlight. **To noise** / **Back to noise** takes it out of signal again.
+- Notion creates the `Working on noise` option on `Focus` the first time it is used (on the Personal board and on Mission Control Task State).
 
 The flow rules live in `lib/flow.ts` as pure functions. Each action returns the exact Notion edits to make.
 
@@ -23,7 +27,7 @@ The flow rules live in `lib/flow.ts` as pure functions. Each action returns the 
 
 - **Start your day** (sign in) opens the **Plan** view with today's recommendations. You build today's ordered plan in any of three ways: tick or drag items in the Department › Project › Mission › Task tree, reorder the plan list, or tell the **Planner** what today is about (typed or by voice). **Start my day** writes the lanes (#1 → Main, the next 3 → Task switch, the rest → Today) and opens today's row in **Mission Control Days**.
 - **Sign out** shows the day's numbers: done, Signal vs Noise, planned done, idle time and carried-over tasks. You can add notes, keep unfinished work for tomorrow or send it back to the to-do list, and the stats are saved to the day's row.
-- When a task is marked done it gets `Done At` and `Done As` (Signal if it was planned and not a pop-up, otherwise Noise).
+- When a task is marked done it gets `Done At` and `Done As` (Signal if it was in Main, Task switch or Today, pop-ups you sent there included; Noise if it was in a noise lane or the to-do list).
 - **Days** charts the last 14 days. **Timeline** is a Gantt of every project and mission, filled by the share of its tasks that are done.
 
 The AI (planner chat, "Recommend me today's tasks", haiku; all in `lib/ai.ts`) calls Claude one of two ways:

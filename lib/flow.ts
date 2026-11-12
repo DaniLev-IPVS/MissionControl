@@ -3,6 +3,9 @@
 //
 //   Main (1)  <-  Dashboard (3)  <-  Today (2-6)  <-  To-do list
 //   Noise: unplanned tasks (pop-ups, or due within NOISE_DUE_DAYS)
+//   Detour ("Working on noise"): a pop-up you chose to work on anyway. It sits beside
+//   Main, never in it, and counts as noise when it gets done.
+//   A pop-up sent to signal keeps its Noise flag: that's what marks it as unplanned.
 //
 // After every action, autofill() promotes the next eligible Dashboard task to
 // Main and refills the Dashboard from Today, in Focus Order.
@@ -15,11 +18,19 @@ import {
   isDoneStatus,
   isTodoStatus,
   type Focus,
+  type SignalFocus,
 } from "./config";
 import type { Change, NewTask, Task, TaskPatch } from "./types";
 
-export type Lane = "main" | "dashboard" | "today" | "noise" | "backlog";
-export type Sections = { main: Task | null; dashboard: Task[]; today: Task[]; noise: Task[]; backlog: Task[] };
+export type Lane = "main" | "dashboard" | "today" | "detour" | "noise" | "backlog";
+export type Sections = {
+  main: Task | null;
+  dashboard: Task[];
+  today: Task[];
+  detour: Task[]; // noise being worked on right now
+  noise: Task[]; // noise that came up, not picked up
+  backlog: Task[];
+};
 export type Plan = { changes: Change[]; creates: NewTask[] };
 
 // ---- Basics -----------------------------------------------------------------
@@ -50,6 +61,7 @@ export function sections(tasks: Task[], today: string): Sections {
     // A second "Main" (e.g. set in Notion) is treated as next in line.
     dashboard: [...mains.slice(1), ...tasks.filter((t) => t.focus === "dashboard").sort(byOrder)],
     today: tasks.filter((t) => t.focus === "today").sort(byOrder),
+    detour: tasks.filter((t) => t.focus === "detour").sort(byOrder),
     noise: tasks.filter((t) => isNoise(t, today)),
     backlog: tasks.filter((t) => !t.focus && !isNoise(t, today)),
   };
@@ -60,7 +72,9 @@ export function laneOf(t: Task, today: string): Lane {
   return isNoise(t, today) ? "noise" : "backlog";
 }
 
-export const isSignal = (t: Task) => !!t.focus;
+export const isSignal = (t: Pick<Task, "focus">) => !!t.focus && t.focus !== "detour";
+/** Signal that started as a pop-up: unplanned, but you decided it belongs in the plan. */
+export const isPopupSignal = (t: Pick<Task, "focus" | "noise">) => isSignal(t) && t.noise;
 
 /** Tasks with no open children: the actionable bottom of the tree. */
 export function lowestLevel(tasks: Task[]) {
@@ -173,13 +187,13 @@ export const openUnder = (tasks: Task[], task: Task) =>
 
 /** Done. A project or mission takes everything still open under it along. */
 export function done(tasks: Task[], task: Task, today: string, now = new Date()): Plan {
-  // Planned work (in a Focus lane, not a pop-up) is signal; anything else is noise.
-  const doneAs = task.focus && !task.noise ? "Signal" : "Noise";
+  // Work in a signal lane is signal, pop-ups you sent there included. Anything else is noise.
+  const doneAs = isSignal(task) ? "Signal" : "Noise";
   const under = descendants(tasks, task.id).filter((t) => !isDoneStatus(t.status));
   return finish(tasks, today, [
     { id: task.id, patch: doneDetails(task, doneAs, now) },
     // Sub-items count the same way their own lane would have.
-    ...under.map((t) => ({ id: t.id, patch: doneDetails(t, t.focus && !t.noise ? "Signal" : "Noise", now) })),
+    ...under.map((t) => ({ id: t.id, patch: doneDetails(t, isSignal(t) ? "Signal" : "Noise", now) })),
   ]);
 }
 
@@ -192,7 +206,10 @@ export function blocked(tasks: Task[], task: Task, today: string): Plan {
 
 /** Blocked from any card: planned work drops to the end of Today; unplanned work keeps its place. */
 export function markBlocked(tasks: Task[], task: Task, today: string): Plan {
-  if (task.focus) return blocked(tasks, task, today);
+  if (isSignal(task)) return blocked(tasks, task, today);
+  // Blocked noise you were working on drops back to the noise that came up.
+  if (task.focus === "detour")
+    return finish(tasks, today, [{ id: task.id, patch: { status: "Blocked", focus: null, focusOrder: null } }]);
   return finish(tasks, today, [{ id: task.id, patch: { status: "Blocked" } }]);
 }
 
@@ -237,8 +254,8 @@ export function makeMain(tasks: Task[], task: Task, today: string, now = new Dat
     });
   }
   if (isBlocked(task)) patch.status = "Working on it";
-  // Pulled straight from the Noise lane: it stays noise when it gets done.
-  if (laneOf(task, today) === "noise" && !task.noise) patch.noise = true;
+  // Pulled straight from noise: flag it, so it shows as a pop-up inside signal.
+  if (!isSignal(task) && isUnplanned(task, today) && !task.noise) patch.noise = true;
   changes.push({ id: task.id, patch });
   return finish(tasks, today, changes);
 }
@@ -258,6 +275,7 @@ export function snooze(task: Task, minutes: number, now = new Date()): Plan {
 /** Move a task into a lane at a position (index within that lane's visible order). */
 export function moveTo(tasks: Task[], task: Task, lane: Lane, index: number, today: string): Plan {
   if (lane === "main") return makeMain(tasks, task, today);
+  if (lane === "detour") return workOnNoise(tasks, task, today);
   if (lane === "noise" || lane === "backlog") {
     return finish(tasks, today, [
       { id: task.id, patch: { focus: null, focusOrder: null, noise: lane === "noise", idleSince: null, idleReminder: null } },
@@ -269,10 +287,48 @@ export function moveTo(tasks: Task[], task: Task, lane: Lane, index: number, tod
   const changes: Change[] = [];
   list.forEach((t, i) => {
     const order = i + 1;
-    if (t.id === task.id) changes.push({ id: t.id, patch: { focus: lane as Focus, focusOrder: order } });
-    else if (t.focusOrder !== order || t.focus !== lane) changes.push({ id: t.id, patch: { focus: lane as Focus, focusOrder: order } });
+    if (t.id === task.id) {
+      // Sent from noise to signal: keep (or set) the flag that marks it as a pop-up.
+      const popup = !isSignal(task) && isUnplanned(task, today) && !task.noise;
+      changes.push({ id: t.id, patch: { focus: lane as Focus, focusOrder: order, ...(popup ? { noise: true } : {}) } });
+    } else if (t.focusOrder !== order || t.focus !== lane) changes.push({ id: t.id, patch: { focus: lane as Focus, focusOrder: order } });
   });
   return finish(tasks, today, changes);
+}
+
+// ---- Noise decisions ----------------------------------------------------------
+/** In the noise lane or being worked on as noise. */
+const isUnplanned = (t: Task, today: string) => t.focus === "detour" || isNoise(t, today);
+
+/**
+ * "I have to work on this": the pop-up becomes Working on noise. Main is left alone,
+ * so it keeps showing what you should be working on.
+ */
+export function workOnNoise(tasks: Task[], task: Task, today: string): Plan {
+  const s = sections(tasks, today);
+  return finish(tasks, today, [
+    {
+      id: task.id,
+      patch: clean({
+        focus: "detour",
+        focusOrder: maxOrder(s.detour.filter((t) => t.id !== task.id)) + 1,
+        noise: true,
+        status: isTodoStatus(task.status) || isBlocked(task) ? "Working on it" : undefined,
+        idleSince: null,
+        idleReminder: null,
+      }),
+    },
+  ]);
+}
+
+/** "This belongs in the plan": the pop-up joins the end of Today, still marked as a pop-up. */
+export function sendToSignal(tasks: Task[], task: Task, today: string): Plan {
+  return moveTo(tasks, task, "today", Number.MAX_SAFE_INTEGER, today);
+}
+
+/** Out of signal (or off your hands) and back to the noise that came up. */
+export function backToNoise(tasks: Task[], task: Task, today: string): Plan {
+  return moveTo(tasks, task, "noise", 0, today);
 }
 
 // ---- Creating and splitting ---------------------------------------------------
@@ -362,7 +418,7 @@ export function split(tasks: Task[], task: Task, parts: string[], today: string)
 
 // ---- Day planning ------------------------------------------------------------------
 /** Where the n-th planned item lands: 1st = Main, next 3 = Task switch, rest = Today. */
-export function slotFor(index: number): Focus {
+export function slotFor(index: number): SignalFocus {
   return index === 0 ? "main" : index <= DASHBOARD_SLOTS ? "dashboard" : "today";
 }
 
@@ -376,7 +432,7 @@ export function commitPlan(tasks: Task[], order: string[], creates: NewTask[] = 
   const createById = new Map(creates.map((c) => [c.tempId, c]));
   const changes: Change[] = [];
   const keep = new Set(order);
-  const counters: Record<Focus, number> = { main: 0, dashboard: 0, today: 0 };
+  const counters: Record<Focus, number> = { main: 0, dashboard: 0, today: 0, detour: 0 };
 
   order.forEach((id, i) => {
     const focus = slotFor(i);
@@ -396,7 +452,8 @@ export function commitPlan(tasks: Task[], order: string[], creates: NewTask[] = 
     if (Object.keys(patch).length) changes.push({ id, patch });
   });
   for (const t of tasks) {
-    if (t.focus && !keep.has(t.id)) changes.push({ id: t.id, patch: { focus: null, focusOrder: null } });
+    // Noise you're working on isn't part of the plan: re-planning leaves it where it is.
+    if (isSignal(t) && !keep.has(t.id)) changes.push({ id: t.id, patch: { focus: null, focusOrder: null } });
   }
   return { changes, creates: creates.filter((c) => keep.has(c.tempId)) };
 }

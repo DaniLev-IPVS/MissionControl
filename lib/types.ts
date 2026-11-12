@@ -93,6 +93,14 @@ export type TaskPatch = Partial<
 
 export type Change = { id: string; patch: TaskPatch };
 
+/** Where a pop-up from the top bar belongs (answer of /api/popup). */
+export type PopupFiling = {
+  parentId: string | null;
+  departmentIds: string[];
+  due: string | null;
+  where: string; // "Finance › Open the business bank account", or "" when unfiled
+};
+
 export type NewTask = {
   tempId: string;
   name: string;

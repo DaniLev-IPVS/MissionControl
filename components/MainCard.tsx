@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, CirclePause, Crosshair, Info, OctagonAlert, Scissors, Sparkles } from "lucide-react";
-import { autofill, blocked, idle, sections } from "@/lib/flow";
+import { Check, CirclePause, Crosshair, Info, OctagonAlert, Scissors, Sparkles, Waves } from "lucide-react";
+import { autofill, backToNoise, blocked, idle, isPopupSignal, sections } from "@/lib/flow";
 import { askNotificationPermission } from "@/lib/hooks";
 import type { Task } from "@/lib/types";
 import { SplitDialog } from "./SplitDialog";
@@ -37,13 +37,17 @@ export function MainCard({ task, onDropTask }: { task: Task | null; onDropTask: 
     },
   };
 
+  const s = sections(tasks, today);
+  // Noise being worked on right now. Main doesn't change: it still says what the plan is.
+  const onNoise = s.detour.length > 0;
+  const popup = !!task && isPopupSignal(task);
+
   if (!task) {
     const next = autofill(tasks, today);
-    const s = sections(tasks, today);
     return (
       <section
         {...dropProps}
-        aria-label="Currently working on"
+        aria-label="This is what you should be working on"
         className={cx("relative overflow-hidden rounded-[28px] p-7 glass-strong", over && "ring-2 ring-primary-hi")}
       >
         <Label />
@@ -68,26 +72,53 @@ export function MainCard({ task, onDropTask }: { task: Task | null; onDropTask: 
   return (
     <section
       {...dropProps}
-      aria-label="Currently working on"
+      aria-label="This is what you should be working on"
       className={cx(
         "relative z-10 rounded-[28px] p-6 sm:p-7 glass-strong",
+        popup && "border-popup/50!",
         over && "ring-2 ring-primary-hi",
       )}
     >
       {/* Signal glow (clipped on its own layer so menus can overflow the card) */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[28px]" aria-hidden>
-        <div className="absolute -right-24 -top-24 size-72 rounded-full bg-primary/30 blur-3xl" />
+        <div className={cx("absolute -right-24 -top-24 size-72 rounded-full blur-3xl", popup ? "bg-popup/20" : "bg-primary/30")} />
       </div>
       <div className="relative">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <Label />
-          <button
-            onClick={() => openDetails(task.id)}
-            className="inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs font-semibold text-ink-3 glass-chip hover:text-ink"
-          >
-            <Info className="size-3.5" /> Details
-          </button>
+          <div className="flex items-center gap-2">
+            {popup && (
+              <button
+                onClick={() => apply(backToNoise(tasks, task, today))}
+                title="Move it out of signal, back to Noise"
+                className="inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs font-semibold text-noise glass-chip hover:bg-noise/20"
+              >
+                <Waves className="size-3.5" /> Back to noise
+              </button>
+            )}
+            <button
+              onClick={() => openDetails(task.id)}
+              className="inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs font-semibold text-ink-3 glass-chip hover:text-ink"
+            >
+              <Info className="size-3.5" /> Details
+            </button>
+          </div>
         </div>
+
+        {onNoise && (
+          <p role="status" className="mt-3 inline-flex max-w-full items-center gap-2 rounded-full bg-noise/15 px-3 py-1.5 text-xs font-semibold text-noise ring-1 ring-noise/35">
+            <Waves className="size-3.5 shrink-0" aria-hidden />
+            <span className="truncate">
+              Right now you&apos;re on noise instead: {s.detour[0].name}
+              {s.detour.length > 1 ? ` +${s.detour.length - 1}` : ""}
+            </span>
+          </p>
+        )}
+        {popup && (
+          <p className="mt-3 text-xs font-medium text-popup">
+            A pop-up: this wasn&apos;t in the plan this morning. You sent it to signal.
+          </p>
+        )}
 
         <h2 className="mt-4 text-2xl font-semibold leading-tight tracking-tight text-ink sm:text-[28px]">{task.name}</h2>
         <div className="mt-3 space-y-2">
@@ -141,7 +172,7 @@ export function MainCard({ task, onDropTask }: { task: Task | null; onDropTask: 
 function Label() {
   return (
     <div className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-primary-hi">
-      <Crosshair className="size-3.5" /> Currently working on
+      <Crosshair className="size-3.5" /> This is what you should be working on
     </div>
   );
 }

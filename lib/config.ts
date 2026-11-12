@@ -74,9 +74,18 @@ export function levelToNotion(level: Level, oldNames: boolean): string {
 }
 
 // ---- Focus stages (Signal / Noise) -----------------------------------------
-export const FOCUS = ["main", "dashboard", "today"] as const;
+// "detour" is not signal: it's a pop-up you chose to work on anyway ("Working on noise").
+// Notion adds the select option the first time it is written.
+export const FOCUS = ["main", "dashboard", "today", "detour"] as const;
 export type Focus = (typeof FOCUS)[number];
-export const FOCUS_NOTION: Record<Focus, string> = { main: "Main", dashboard: "Dashboard", today: "Today" };
+export const FOCUS_NOTION: Record<Focus, string> = {
+  main: "Main",
+  dashboard: "Dashboard",
+  today: "Today",
+  detour: "Working on noise",
+};
+/** The lanes that make up the day's plan. */
+export type SignalFocus = Exclude<Focus, "detour">;
 export const focusFromNotion = (name: string | null): Focus | null =>
   (Object.entries(FOCUS_NOTION).find(([, v]) => v === name)?.[0] as Focus) ?? null;
 

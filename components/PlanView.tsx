@@ -478,7 +478,11 @@ function TreeRow({
         <div className="hidden shrink-0 items-center gap-1.5 sm:flex">
           {finished && <span className="text-[11px] font-semibold text-success">{task.status}</span>}
           {isBlocked(task) && <span className="text-[11px] font-semibold text-danger-hi">Blocked</span>}
-          {task.focus && <span className="text-[11px] text-primary-hi">in focus</span>}
+          {task.focus === "detour" ? (
+            <span className="text-[11px] text-noise">working on noise</span>
+          ) : (
+            task.focus && <span className="text-[11px] text-primary-hi">in focus</span>
+          )}
           <BoardBadge board={task.board} />
           <PriorityPill p={task.priority} />
           <DueBadge due={task.due} today={today} />

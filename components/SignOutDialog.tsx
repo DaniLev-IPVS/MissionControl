@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Coins, Mic, MicOff } from "lucide-react";
 import { signOut } from "@/app/actions";
 import { computeDayStats } from "@/lib/days";
+import { isSignal } from "@/lib/flow";
 import { useDictation, useNow } from "@/lib/hooks";
 import { fmtMinutes } from "./DetailsDrawer";
 import { Haiku } from "./Haiku";
@@ -19,7 +20,9 @@ export function SignOutDialog({ onClose }: { onClose: () => void }) {
 
   // Everything still in a lane, plus planned work that slipped out of one, goes back to the to-do list.
   const planned = new Set(day.plannedIds);
-  const carried = tasks.filter((t) => !t.id.startsWith("tmp-") && (t.focus || planned.has(t.id)));
+  const carried = tasks.filter((t) => !t.id.startsWith("tmp-") && (isSignal(t) || planned.has(t.id)));
+  // Noise you were still working on wasn't planned: it just goes back to Noise.
+  const dropped = tasks.filter((t) => !t.id.startsWith("tmp-") && t.focus === "detour" && !planned.has(t.id));
   const signedIn = day.signedIn ? new Date(day.signedIn) : null;
   const now = useNow();
   const minutes = signedIn && now ? Math.round((now - signedIn.getTime()) / 60000) : 0;
@@ -29,16 +32,18 @@ export function SignOutDialog({ onClose }: { onClose: () => void }) {
     setSaving(true);
     voice.stop();
     const returnIds = carried.map((t) => t.id);
+    const dropIds = dropped.map((t) => t.id);
     const missedOn = day.date;
+    const flush = { focus: null, focusOrder: null, idleSince: null, idleReminder: null };
     const ok = await apply(
       {
-        changes: returnIds.map((id) => ({
-          id,
-          patch: { focus: null, focusOrder: null, idleSince: null, idleReminder: null, missedOn },
-        })),
+        changes: [
+          ...returnIds.map((id) => ({ id, patch: { ...flush, missedOn } })),
+          ...dropIds.map((id) => ({ id, patch: flush })),
+        ],
         creates: [],
       },
-      () => signOut(day.id, { ...stats, carriedOver: carried.length }, notes, returnIds),
+      () => signOut(day.id, { ...stats, carriedOver: carried.length }, notes, returnIds, dropIds),
     );
     setSaving(false);
     if (ok) onClose();
