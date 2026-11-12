@@ -197,7 +197,8 @@ export function Modal({
         aria-modal="true"
         aria-label={title}
         onMouseDown={(e) => e.stopPropagation()}
-        className={cx("animate-pop w-full rounded-3xl p-5 glass-sheet", wide ? "max-w-2xl" : "max-w-lg")}
+        // Never taller than the screen: a long dialog scrolls inside, so its buttons stay reachable.
+        className={cx("animate-pop scroll-thin max-h-[calc(100dvh-2rem)] w-full overflow-y-auto rounded-3xl p-5 glass-sheet", wide ? "max-w-2xl" : "max-w-lg")}
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-base font-semibold">{title}</h2>

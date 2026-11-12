@@ -18,6 +18,7 @@ import {
   Zap,
 } from "lucide-react";
 import { LEVELS, LEVEL_LABELS, TODAY_TARGET, isDoneStatus, type Level } from "@/lib/config";
+import { dayIsOn } from "@/lib/days";
 import { isIdle, localDay, lowestLevel, makeMain, moveTo, sections, type Lane } from "@/lib/flow";
 import { useNow, useReminders } from "@/lib/hooks";
 import type { Task } from "@/lib/types";
@@ -25,6 +26,7 @@ import { useBoard } from "@/lib/useBoard";
 import { logout } from "@/app/actions";
 import { CompanyView } from "./CompanyView";
 import { DaysView } from "./DaysView";
+import { DayWatch } from "./DayWatch";
 import { DetailsDrawer } from "./DetailsDrawer";
 import { IdleBoard } from "./IdleBoard";
 import { NotificationRail, ReminderToasts } from "./Notifications";
@@ -196,6 +198,9 @@ export default function MissionControl() {
   const showBacklog = type === "all";
   const age = lastSync && nowMs ? Math.round((nowMs - lastSync) / 1000) : null;
   const detailsTask = detailsId ? tasks.find((t) => t.id === detailsId) : undefined;
+  // The day runs while anything is in Main, Task switch, Today or Working on noise (idle work
+  // included). That, not the day log, decides between "Start your day" and "End your day".
+  const dayOn = dayIsOn(tasks);
 
   // Idle work (handed to AI) lives on the Idle board, not in its lane.
   const active = (t: Task) => !isIdle(t);
@@ -248,7 +253,7 @@ export default function MissionControl() {
           </div>
 
           <DayButton
-            state={!board!.day?.signedIn ? "out" : board!.day.signedOut ? "done" : "in"}
+            on={dayOn}
             onSignIn={() => {
               setPlanning(true);
               setView("plan");
@@ -613,6 +618,7 @@ export default function MissionControl() {
 
       {/* ---- Overlays ---- */}
       <div className="fixed inset-x-4 bottom-4 z-40 mx-auto flex max-w-md flex-col gap-2" aria-live="assertive">
+        <DayWatch paused={signingOut} saving={saving} fresh={!error && age !== null && age < 10} onEndDay={() => setSigningOut(true)} />
         <ReminderToasts {...reminders} />
         {saveError && (
           <div role="alert" className="animate-pop flex items-center gap-3 rounded-2xl p-3.5 glass-float ring-1 ring-danger/40">
@@ -625,7 +631,7 @@ export default function MissionControl() {
       </div>
 
       {detailsTask && <DetailsDrawer task={detailsTask} onClose={() => setDetailsId(null)} />}
-      {signingOut && board!.day && <SignOutDialog onClose={() => setSigningOut(false)} />}
+      {signingOut && <SignOutDialog onClose={() => setSigningOut(false)} />}
       {adding && <QuickAdd onClose={() => setAdding(null)} startListening={adding === "voice"} />}
     </MCContext.Provider>
   );
@@ -795,21 +801,13 @@ function Backlog({ tasks, grouped, onDragStart }: { tasks: Task[]; grouped: bool
 }
 
 
-function DayButton({
-  state,
-  onSignIn,
-  onSignOut,
-}: {
-  state: "out" | "in" | "done";
-  onSignIn: () => void;
-  onSignOut: () => void;
-}) {
-  if (state === "in")
+function DayButton({ on, onSignIn, onSignOut }: { on: boolean; onSignIn: () => void; onSignOut: () => void }) {
+  if (on)
     return (
       <button
         onClick={onSignOut}
         className="inline-flex h-11 items-center gap-2 rounded-full px-4 text-sm font-semibold text-ink glass-chip hover:bg-white/12"
-        title="Sign out: log the day and clear today's lanes"
+        title="Log the day and clear Main, Task switch, Today and Idle. The to-do list stays."
       >
         <Sunset className="size-4 text-noise" /> End your day
       </button>
@@ -817,15 +815,10 @@ function DayButton({
   return (
     <button
       onClick={onSignIn}
-      className={cx(
-        "inline-flex h-11 items-center gap-2 rounded-full px-4 text-sm font-semibold",
-        state === "out"
-          ? "bg-success/90 text-[#04210f] shadow-[0_8px_30px_-8px_rgb(7_202_107/0.8)] hover:bg-success"
-          : "text-ink-2 glass-chip hover:text-ink",
-      )}
-      title={state === "out" ? "Sign in: get recommendations and pick today's tasks" : "You ended today already. Start again?"}
+      className="inline-flex h-11 items-center gap-2 rounded-full bg-success/90 px-4 text-sm font-semibold text-[#04210f] shadow-[0_8px_30px_-8px_rgb(7_202_107/0.8)] hover:bg-success"
+      title="Nothing is in Main, Today or Idle. Get recommendations and pick today's tasks."
     >
-      <Sunrise className="size-4" /> {state === "out" ? "Start your day" : "Restart your day"}
+      <Sunrise className="size-4" /> Start your day
     </button>
   );
 }

@@ -6,7 +6,9 @@ import { updateTag } from "next/cache";
 import { AUTH_COOKIE, adminCredentials, safeEqual, sessionToken } from "@/lib/auth";
 import { getCurrentSprintId, getHistory, todayInZone } from "@/lib/board";
 import { ALL_STATUSES, BOARD_TAG, FOCUS, LEVELS, PRIORITIES, USE_MOCK } from "@/lib/config";
+import { DAY_LOOKBACK, PUSH_MIN, workingDay } from "@/lib/days";
 import { mockCreate, mockCreateDay, mockUpdate, mockUpdateDay } from "@/lib/mock";
+import { setWorkingUntil } from "@/lib/overtime";
 import { createDay, createTaskInNotion, updateDay, updateTaskInNotion } from "@/lib/notion";
 import type { Change, DayStats, NewTask, TaskPatch } from "@/lib/types";
 
@@ -170,8 +172,15 @@ export async function signIn(changes: Change[], creates: NewTask[], order: strin
   const plannedIds = order.map((id) => realId.get(id) ?? id).filter((id) => !id.startsWith("tmp-"));
 
   const today = todayInZone();
-  const existing = (await getHistory(1)).find((d) => d.date === today);
+  const history = await getHistory(DAY_LOOKBACK);
+  const existing = history.find((d) => d.date === today);
   const now = new Date().toISOString();
+  // An earlier day that was never ended is over once a new one starts.
+  for (const d of history) {
+    if (d.date >= today || !d.signedIn || d.signedOut) continue;
+    if (USE_MOCK) mockUpdateDay(d.id, { signedOut: now });
+    else await updateDay(d.id, { signedOut: now });
+  }
   if (existing) {
     const patch = { signedOut: null, plannedIds, ...(existing.signedIn ? {} : { signedIn: now }) };
     if (USE_MOCK) mockUpdateDay(existing.id, patch);
@@ -183,18 +192,50 @@ export async function signIn(changes: Change[], creates: NewTask[], order: strin
   return { ok: true };
 }
 
+/** Work landed in a lane without "Start your day" (dragged in, or added after the day was
+ *  ended): open the day's row so the day has a start time and the midnight check knows its date. */
+export async function openDay() {
+  const today = todayInZone();
+  const day = workingDay(await getHistory(DAY_LOOKBACK), today);
+  const now = new Date().toISOString();
+  if (!day) {
+    if (USE_MOCK) mockCreateDay(today, now, []);
+    else await createDay(today, now, []);
+  } else if (day.signedOut || !day.signedIn) {
+    const patch = { signedOut: null, ...(day.signedIn ? {} : { signedIn: now }) };
+    if (USE_MOCK) mockUpdateDay(day.id, patch);
+    else await updateDay(day.id, patch);
+  } else return { ok: true };
+  updateTag(BOARD_TAG);
+  return { ok: true };
+}
+
 /** End the day: save the stats and notes, and flush today's lanes. Unfinished work goes back to
  *  the to-do list marked with the day it was missed. `dropIds` (noise that was being worked on)
- *  leave their lane too, but were never planned, so they aren't marked as missed. */
-export async function signOut(dayId: string, stats: DayStats, notes: string, returnIds: string[], dropIds: string[] = []) {
-  if (!ID.test(dayId) || [...returnIds, ...dropIds].some((id) => !ID.test(id))) throw new Error("Bad id");
+ *  leave their lane too, but were never planned, so they aren't marked as missed.
+ *  `dayId` is null when the day has no row yet; `endedAt` is set when the midnight check ended
+ *  the day (the moment the 15 minutes ran out, which can be well before this call). */
+export async function signOut(
+  dayId: string | null,
+  stats: DayStats,
+  notes: string,
+  returnIds: string[],
+  dropIds: string[] = [],
+  endedAt?: string,
+) {
+  if ((dayId !== null && !ID.test(dayId)) || [...returnIds, ...dropIds].some((id) => !ID.test(id))) throw new Error("Bad id");
   const nums = ["planned", "done", "signalDone", "noiseDone", "plannedDone", "carriedOver", "idleMinutes"] as const;
   for (const k of nums) if (!Number.isFinite(stats[k]) || stats[k] < 0) throw new Error(`Bad ${k}`);
   if (stats.doneIds.some((id) => !ID.test(id))) throw new Error("Bad done id");
   if (typeof notes !== "string" || notes.length > 2000) throw new Error("Bad notes");
+  if (endedAt !== undefined && !isISO(endedAt)) throw new Error("Bad end time");
+
+  const today = todayInZone();
+  const history = await getHistory(DAY_LOOKBACK).catch(() => []);
+  const row = dayId ? history.find((d) => d.id === dayId) : workingDay(history, today);
 
   if (returnIds.length || dropIds.length) {
-    const missedOn = todayInZone();
+    const missedOn = row?.date ?? today;
     const { errors } = await writeChanges(
       [
         ...returnIds.map((id) => ({ id, patch: { ...FLUSH, missedOn } })),
@@ -204,11 +245,27 @@ export async function signOut(dayId: string, stats: DayStats, notes: string, ret
     );
     if (errors.length) throw new Error(errors[0]);
   }
-  const patch = { ...stats, notes, signedOut: new Date().toISOString() };
-  if (USE_MOCK) mockUpdateDay(dayId, patch);
-  else await updateDay(dayId, patch);
+  const now = new Date().toISOString();
+  let id = dayId ?? row?.id ?? null;
+  if (!id) id = USE_MOCK ? mockCreateDay(today, now, []) : await createDay(today, now, []);
+  const signedOut = endedAt && Date.parse(endedAt) <= Date.now() ? new Date(endedAt).toISOString() : now;
+  const patch = { ...stats, notes, signedOut };
+  if (USE_MOCK) mockUpdateDay(id, patch);
+  else await updateDay(id, patch);
   updateTag(BOARD_TAG);
   return { ok: true };
+}
+
+/** "I'm still working", past midnight: don't ask again (or end the day) before `until`. */
+export async function stillWorking(dayId: string, until: string) {
+  if (!ID.test(dayId) || !isISO(until)) throw new Error("Bad request");
+  const at = Date.parse(until);
+  if (at < Date.now() - 60_000 || at > Date.now() + (PUSH_MIN + 5) * 60_000) throw new Error("Bad time");
+  const day = (await getHistory(DAY_LOOKBACK)).find((d) => d.id === dayId);
+  if (!day) throw new Error("Day not found");
+  const saved = await setWorkingUntil(day.date, new Date(at).toISOString());
+  updateTag(BOARD_TAG);
+  return { ok: saved };
 }
 
 const FLUSH = { focus: null, focusOrder: null, idleSince: null, idleReminder: null } as const;

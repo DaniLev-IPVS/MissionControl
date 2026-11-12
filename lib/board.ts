@@ -1,7 +1,10 @@
 import "server-only";
 import { cacheLife, cacheTag } from "next/cache";
 import { BOARD_TAG, TIME_ZONE, USE_MOCK } from "./config";
+import { DAY_LOOKBACK, workingDay } from "./days";
+import { addDays } from "./flow";
 import { mockStore, mockTree } from "./mock";
+import { getWorkingUntil } from "./overtime";
 import {
   fetchAllTasks,
   fetchCurrentSprintId,
@@ -73,6 +76,14 @@ async function getDays(sinceDay: string): Promise<Day[]> {
   return value;
 }
 
+/** "Still working" confirmed past midnight, for a day that wasn't ended. */
+async function getOvertime(day: string): Promise<string | null> {
+  "use cache: remote";
+  cacheTag(BOARD_TAG, "overtime");
+  cacheLife({ revalidate: 30, expire: 600 });
+  return getWorkingUntil(day);
+}
+
 async function getTree(): Promise<TreeTask[]> {
   "use cache: remote";
   cacheTag(BOARD_TAG, "tree");
@@ -103,18 +114,34 @@ function startOfToday(timeZone = TIME_ZONE) {
   return new Date(local.getTime() + offset).toISOString();
 }
 
+// Midnight at the start of `day` (YYYY-MM-DD) in the studio's time zone, as an ISO string.
+function startOfDay(day: string, timeZone = TIME_ZONE) {
+  const noon = new Date(`${day}T12:00:00Z`);
+  const local = new Date(noon.toLocaleString("en-US", { timeZone }));
+  const offset = noon.getTime() - local.getTime();
+  local.setHours(0, 0, 0, 0);
+  return new Date(local.getTime() + offset).toISOString();
+}
+
 export async function getBoard(): Promise<Board> {
   const today = todayInZone();
-  const [open, doneToday, departments, currentSprintId, days] = await Promise.all([
+  const [open, departments, currentSprintId, days] = await Promise.all([
     getOpenTasks(),
-    getDoneSince(startOfToday()),
     getDepartments(),
     getCurrentSprintId(),
-    getDaysSoft(today),
+    getDaysSoft(addDays(today, -DAY_LOOKBACK)),
   ]);
   const tasks = fileShared(open.value, departments);
   const warnings = [...open.warnings, ...days.warnings];
-  const day = days.value.find((d) => d.date === today) ?? null;
+  // A day that wasn't ended keeps running past midnight: it stays the day on the board, with
+  // everything finished since it began, until it is ended (by hand, or by the midnight check).
+  let day = workingDay(days.value, today);
+  const overnight = !!day && day.date < today;
+  const [doneToday, workingUntil] = await Promise.all([
+    getDoneSince(overnight ? startOfDay(day!.date) : startOfToday()),
+    overnight ? getOvertime(day!.date) : null,
+  ]);
+  if (day && workingUntil) day = { ...day, workingUntil };
 
   const known = new Set(tasks.map((t) => t.id));
   const needed = new Set<string>();

@@ -15,7 +15,7 @@ A website version of the **Personal Sprint Work Board** in Notion. Notion stays 
 
 - Tasks flow upward in `Focus Order`. When Main finishes (Done), gets stuck (Blocked) or goes Idle, the next free Task switch task moves up and Today refills the Task switch.
 - **Idle** starts a timer (`Idle Since`) and an optional reminder (`Idle Reminder`). When the task returns to Main, the time is added to `Idle Minutes` and logged in `Idle Log`.
-- **Split** breaks a task into sibling tasks, or a project or mission into children.
+- **Split** breaks a task into sibling tasks, or a project or mission into children. Two ways, picked in the dialog: **Describe it** (say or dictate how you want it split, AI writes the parts, you check them) or **Manual** (list the parts yourself, one per line).
 - Levels are Project › Mission › Task, and tasks are grouped by **Departments**.
 - **Pop-ups**: the bar at the top takes one line (typed or dictated, `/` jumps to it). `/api/popup` picks the mission and department it belongs to, and the task is added to **Noise that came up**. The plan is not touched.
 - Each noise card asks for a decision. **Work on it** moves it to **Working on noise** (Main keeps showing the planned task, with a note that you're on noise). **To signal** adds it to Today; it keeps its `Noise` tick, which is what gives it the yellow pop-up highlight. **To noise** / **Back to noise** takes it out of signal again.
@@ -27,6 +27,9 @@ The flow rules live in `lib/flow.ts` as pure functions. Each action returns the 
 
 - **Start your day** (sign in) opens the **Plan** view with today's recommendations. You build today's ordered plan in any of three ways: tick or drag items in the Department › Project › Mission › Task tree, reorder the plan list, or tell the **Planner** what today is about (typed or by voice). **Start my day** writes the lanes (#1 → Main, the next 3 → Task switch, the rest → Today) and opens today's row in **Mission Control Days**.
 - **Sign out** shows the day's numbers: done, Signal vs Noise, planned done, idle time and carried-over tasks. You can add notes, keep unfinished work for tomorrow or send it back to the to-do list, and the stats are saved to the day's row.
+- **Which button you see** follows the board, not the log: while anything sits in Main, Task switch, Today or Idle the header shows **End your day**; when all of those are empty it shows **Start your day**. The to-do list and Noise don't count. Work put in a lane without the Start flow opens the day's row on its own.
+- **End your day** empties Main, Task switch, Today and Idle (planned work goes back to the to-do list marked as missed, noise you were on goes back to Noise). The to-do list is left alone.
+- **Midnight**: a day that wasn't ended gets a silent pop-up at midnight. No answer within 15 minutes and the day is ended for you; **I'm still working** pushes the next check an hour out, and so on until you stop confirming or end the day. If the site was closed at midnight, the day is ended the next time it's opened (logged at 12:15 AM). The confirmation is kept in Neon (`day_overtime`) so every tab and device agrees.
 - When a task is marked done it gets `Done At` and `Done As` (Signal if it was in Main, Task switch or Today, pop-ups you sent there included; Noise if it was in a noise lane or the to-do list).
 - **Days** charts the last 14 days. **Timeline** is a Gantt of every project and mission, filled by the share of its tasks that are done.
 

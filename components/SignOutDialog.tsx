@@ -3,27 +3,25 @@
 import { useMemo, useState } from "react";
 import { Coins, Mic, MicOff } from "lucide-react";
 import { signOut } from "@/app/actions";
-import { computeDayStats } from "@/lib/days";
-import { isSignal } from "@/lib/flow";
+import { endOfDay } from "@/lib/days";
 import { useDictation, useNow } from "@/lib/hooks";
 import { fmtMinutes } from "./DetailsDrawer";
 import { Haiku } from "./Haiku";
 import { Modal, cx, useMC } from "./ui";
 
 export function SignOutDialog({ onClose }: { onClose: () => void }) {
-  const { board, tasks, apply } = useMC();
-  const day = board.day!;
-  const stats = useMemo(() => computeDayStats(board, tasks), [board, tasks]);
-  const [notes, setNotes] = useState(day.notes ?? "");
+  const { board, tasks, today, apply } = useMC();
+  // No row yet when work was put in a lane without "Start your day": ending the day makes one.
+  const day = board.day;
+  const date = day?.date ?? today;
+  // Every lane is emptied: Main, Task switch, Today, the idle work in them, and noise being
+  // worked on. Planned work goes back to the to-do list; that noise goes back to Noise.
+  const { carried, stats, changes, returnIds, dropIds } = useMemo(() => endOfDay(board, tasks), [board, tasks]);
+  const [notes, setNotes] = useState(day?.notes ?? "");
   const [saving, setSaving] = useState(false);
   const voice = useDictation(setNotes);
 
-  // Everything still in a lane, plus planned work that slipped out of one, goes back to the to-do list.
-  const planned = new Set(day.plannedIds);
-  const carried = tasks.filter((t) => !t.id.startsWith("tmp-") && (isSignal(t) || planned.has(t.id)));
-  // Noise you were still working on wasn't planned: it just goes back to Noise.
-  const dropped = tasks.filter((t) => !t.id.startsWith("tmp-") && t.focus === "detour" && !planned.has(t.id));
-  const signedIn = day.signedIn ? new Date(day.signedIn) : null;
+  const signedIn = day?.signedIn ? new Date(day.signedIn) : null;
   const now = useNow();
   const minutes = signedIn && now ? Math.round((now - signedIn.getTime()) / 60000) : 0;
   const signalPct = stats.done ? Math.round((stats.signalDone / stats.done) * 100) : 0;
@@ -31,20 +29,7 @@ export function SignOutDialog({ onClose }: { onClose: () => void }) {
   async function confirm() {
     setSaving(true);
     voice.stop();
-    const returnIds = carried.map((t) => t.id);
-    const dropIds = dropped.map((t) => t.id);
-    const missedOn = day.date;
-    const flush = { focus: null, focusOrder: null, idleSince: null, idleReminder: null };
-    const ok = await apply(
-      {
-        changes: [
-          ...returnIds.map((id) => ({ id, patch: { ...flush, missedOn } })),
-          ...dropIds.map((id) => ({ id, patch: flush })),
-        ],
-        creates: [],
-      },
-      () => signOut(day.id, { ...stats, carriedOver: carried.length }, notes, returnIds, dropIds),
-    );
+    const ok = await apply({ changes, creates: [] }, () => signOut(day?.id ?? null, stats, notes, returnIds, dropIds));
     setSaving(false);
     if (ok) onClose();
   }
@@ -100,7 +85,7 @@ export function SignOutDialog({ onClose }: { onClose: () => void }) {
             {carried.length} unfinished {carried.length === 1 ? "task goes" : "tasks go"} back to the to-do list
           </p>
           <p className="mt-0.5 text-xs text-ink-3">
-            Today&apos;s lanes are cleared. Each one is marked &quot;missed {fmtDay(day.date)}&quot; so you can see what slipped.
+            Today&apos;s lanes are cleared. Each one is marked &quot;missed {fmtDay(date)}&quot; so you can see what slipped.
           </p>
           <ul className="mt-2.5 space-y-1 text-sm text-ink-2">
             {carried.slice(0, 8).map((t) => (

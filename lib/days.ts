@@ -1,5 +1,61 @@
-// Day statistics, shared by the sign-out summary and the server action.
-import type { Board, DayStats, Task } from "./types";
+// The workday: when it is running, what ending it does, its statistics, and the midnight check.
+// Shared by the browser and the server actions.
+import { addDays, isSignal } from "./flow";
+import type { Board, Change, Day, DayStats, Task } from "./types";
+
+// ---- Is a day running? ----------------------------------------------------------------
+/** How far back an un-ended day is still picked up (days). */
+export const DAY_LOOKBACK = 3;
+
+/** The day being worked: today's row, or an earlier one that was never ended (work ran past midnight). */
+export function workingDay(days: Day[], today: string): Day | null {
+  return (
+    days.find((d) => d.date === today) ??
+    days.filter((d) => d.date < today && d.signedIn && !d.signedOut).sort((a, b) => b.date.localeCompare(a.date))[0] ??
+    null
+  );
+}
+
+/** A day is running while anything sits in Main, Task switch, Today or Working on noise.
+ *  Idle work stays in those lanes, so it counts. The to-do list and Noise don't. */
+export const dayIsOn = (tasks: Task[]) => tasks.some((t) => !!t.focus);
+
+/** What ending the day does: every lane is emptied. Planned work goes back to the to-do list
+ *  marked as missed; noise that was being worked on just goes back to Noise. */
+export function endOfDay(board: Board, tasks: Task[]) {
+  const day = board.day;
+  const planned = new Set(day?.plannedIds ?? []);
+  const real = tasks.filter((t) => !t.id.startsWith("tmp-"));
+  const carried = real.filter((t) => isSignal(t) || planned.has(t.id));
+  const dropped = real.filter((t) => t.focus === "detour" && !planned.has(t.id));
+  const returnIds = carried.map((t) => t.id);
+  const dropIds = dropped.map((t) => t.id);
+  const flush = { focus: null, focusOrder: null, idleSince: null, idleReminder: null };
+  const changes: Change[] = [
+    ...returnIds.map((id) => ({ id, patch: day ? { ...flush, missedOn: day.date } : flush })),
+    ...dropIds.map((id) => ({ id, patch: flush })),
+  ];
+  // Idle time is read by date: use the day's own, so a day that ran past midnight keeps its numbers.
+  const when = day ? new Date(`${day.date}T12:00:00`) : new Date();
+  const stats: DayStats = { ...computeDayStats(board, tasks, when), carriedOver: carried.length };
+  return { carried, dropped, returnIds, dropIds, changes, stats };
+}
+
+// ---- Midnight: a day that wasn't ended ----------------------------------------------------
+// At midnight a silent pop-up asks whether you're still working. Confirm and the next check is
+// an hour later; say nothing for 15 minutes and the day is ended for you.
+export const CONFIRM_WINDOW_MIN = 15;
+export const PUSH_MIN = 60;
+
+/** When the "still working?" check is due for an open day, and when it runs out (ms). */
+export function midnightCheck(day: Pick<Day, "date" | "workingUntil">, localUntil = 0) {
+  const midnight = new Date(`${addDays(day.date, 1)}T00:00:00`).getTime();
+  const confirmed = Math.max(day.workingUntil ? Date.parse(day.workingUntil) : 0, localUntil);
+  const checkAt = Math.max(midnight, confirmed);
+  return { checkAt, deadline: checkAt + CONFIRM_WINDOW_MIN * 60_000, next: checkAt + PUSH_MIN * 60_000 };
+}
+
+// ---- Statistics -------------------------------------------------------------------------
 
 const todayLabel = (d: Date) => d.toLocaleString(undefined, { month: "short", day: "numeric" });
 

@@ -128,7 +128,7 @@ export function DaysView() {
           </div>
         )}
         {rows.map((d) => (
-          <DayCard key={d.id} day={d} live={d.date === today && !d.signedOut} />
+          <DayCard key={d.id} day={d} live={d.id === board.day?.id && !d.signedOut} />
         ))}
       </section>
     </div>

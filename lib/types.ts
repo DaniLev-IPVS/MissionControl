@@ -52,9 +52,11 @@ export type Day = {
   idleMinutes: number;
   plannedIds: string[];
   notes: string;
+  /** Past midnight on a day that wasn't ended: "still working" is confirmed until this time (ISO). */
+  workingUntil?: string | null;
 };
 
-export type DayStats = Omit<Day, "id" | "date" | "signedIn" | "signedOut" | "plannedIds" | "notes"> & {
+export type DayStats = Omit<Day, "id" | "date" | "signedIn" | "signedOut" | "plannedIds" | "notes" | "workingUntil"> & {
   doneIds: string[];
 };
 
