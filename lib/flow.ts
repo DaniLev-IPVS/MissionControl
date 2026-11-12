@@ -171,7 +171,24 @@ export function descendants(tasks: Task[], id: string): Task[] {
   return out;
 }
 
-const doneDetails = (_task: Task, doneAs: "Signal" | "Noise", now: Date): TaskPatch => ({
+/**
+ * Close an open idle period: add its minutes to the task's idle total and log it.
+ * Empty when the task isn't idle.
+ */
+export function closeIdle(task: Task, now = new Date()): TaskPatch {
+  if (!task.idleSince) return {};
+  const mins = Math.max(0, Math.round((now.getTime() - Date.parse(task.idleSince)) / 60000));
+  const line = `${new Date(task.idleSince).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · idle ${mins} min`;
+  return {
+    idleMinutes: (task.idleMinutes ?? 0) + mins,
+    idleLog: task.idleLog ? `${task.idleLog}\n${line}` : line,
+    idleSince: null,
+    idleReminder: null,
+  };
+}
+
+const doneDetails = (task: Task, doneAs: "Signal" | "Noise", now: Date): TaskPatch => ({
+  ...closeIdle(task, now),
   status: "Done",
   doneAs,
   doneAt: now.toISOString(),
@@ -213,7 +230,20 @@ export function markBlocked(tasks: Task[], task: Task, today: string): Plan {
   return finish(tasks, today, [{ id: task.id, patch: { status: "Blocked" } }]);
 }
 
+/**
+ * Idle = handed off to AI (or another system) until it needs you again, with an optional
+ * reminder to go back and check the session. Not a pause.
+ *  - Main steps aside to the Dashboard, so the next task can lead.
+ *  - Working on noise stays where it is: it's still being worked on, just not by you right now.
+ */
 export function idle(tasks: Task[], task: Task, today: string, remindInMin: number | null, now = new Date()): Plan {
+  const reminder = remindInMin ? new Date(now.getTime() + remindInMin * 60000).toISOString() : null;
+  if (task.focus === "detour") {
+    return finish(tasks, today, [
+      // Already idle: keep the period running, just reset the reminder.
+      { id: task.id, patch: { idleSince: task.idleSince ?? now.toISOString(), idleReminder: reminder } },
+    ]);
+  }
   const s = sections(tasks, today);
   return finish(tasks, today, [
     {
@@ -242,22 +272,18 @@ export function makeMain(tasks: Task[], task: Task, today: string, now = new Dat
       },
     });
   }
-  const patch: TaskPatch = { ...promote(task).patch };
-  if (task.idleSince) {
-    const mins = Math.max(0, Math.round((now.getTime() - Date.parse(task.idleSince)) / 60000));
-    const line = `${new Date(task.idleSince).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · idle ${mins} min`;
-    Object.assign(patch, {
-      idleMinutes: (task.idleMinutes ?? 0) + mins,
-      idleLog: task.idleLog ? `${task.idleLog}\n${line}` : line,
-      idleSince: null,
-      idleReminder: null,
-    });
-  }
+  const patch: TaskPatch = { ...promote(task).patch, ...closeIdle(task, now) };
   if (isBlocked(task)) patch.status = "Working on it";
   // Pulled straight from noise: flag it, so it shows as a pop-up inside signal.
   if (!isSignal(task) && isUnplanned(task, today) && !task.noise) patch.noise = true;
   changes.push({ id: task.id, patch });
   return finish(tasks, today, changes);
+}
+
+/** Back from idle: noise you were working on stays put; anything else becomes Main. */
+export function resumeIdle(tasks: Task[], task: Task, today: string, now = new Date()): Plan {
+  if (task.focus === "detour") return finish(tasks, today, [{ id: task.id, patch: closeIdle(task, now) }]);
+  return makeMain(tasks, task, today, now);
 }
 
 export function unblock(tasks: Task[], task: Task, today: string): Plan {
@@ -278,7 +304,7 @@ export function moveTo(tasks: Task[], task: Task, lane: Lane, index: number, tod
   if (lane === "detour") return workOnNoise(tasks, task, today);
   if (lane === "noise" || lane === "backlog") {
     return finish(tasks, today, [
-      { id: task.id, patch: { focus: null, focusOrder: null, noise: lane === "noise", idleSince: null, idleReminder: null } },
+      { id: task.id, patch: { ...closeIdle(task), focus: null, focusOrder: null, noise: lane === "noise" } },
     ]);
   }
   const s = sections(tasks, today);

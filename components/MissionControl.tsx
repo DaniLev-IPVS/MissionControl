@@ -19,7 +19,7 @@ import {
   Zap,
 } from "lucide-react";
 import { DASHBOARD_SLOTS, LEVELS, LEVEL_LABELS, TODAY_TARGET, isDoneStatus, type Level } from "@/lib/config";
-import { localDay, lowestLevel, makeMain, moveTo, sections, snooze, type Lane } from "@/lib/flow";
+import { localDay, lowestLevel, makeMain, moveTo, resumeIdle, sections, snooze, type Lane } from "@/lib/flow";
 import { useNow, useReminders } from "@/lib/hooks";
 import type { Task } from "@/lib/types";
 import { useBoard } from "@/lib/useBoard";
@@ -604,17 +604,17 @@ export default function MissionControl() {
           <div key={t.id} className="animate-pop flex items-center gap-3 rounded-2xl p-3.5 glass-float ring-1 ring-warning/40">
             <AlarmClock className="size-5 shrink-0 text-warning" />
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-semibold text-warning">Back to it</p>
+              <p className="text-xs font-semibold text-warning">Check the session</p>
               <p className="truncate text-sm text-ink">{t.name}</p>
             </div>
             <button
               onClick={() => {
                 dismiss(t);
-                apply(makeMain(tasks, t, today));
+                apply(resumeIdle(tasks, t, today));
               }}
               className="h-9 rounded-full bg-primary px-3.5 text-xs font-semibold text-white"
             >
-              Resume
+              Back to it
             </button>
             <button
               onClick={() => {

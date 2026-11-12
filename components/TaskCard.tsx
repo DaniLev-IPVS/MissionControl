@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, Ban, Check, ChevronDown, CornerDownRight, GripVertical, Info, Play, Undo2, Waves } from "lucide-react";
+import { createPortal } from "react-dom";
+import { ArrowUpRight, Ban, Bot, Check, ChevronDown, CornerDownRight, GripVertical, Info, Play, Undo2, Waves } from "lucide-react";
 import { LEVEL_LABELS } from "@/lib/config";
 import {
   backToNoise,
@@ -11,12 +12,16 @@ import {
   makeMain,
   markBlocked,
   moveTo,
+  idle,
+  resumeIdle,
   sendToSignal,
   unblock,
   workOnNoise,
   type Lane,
 } from "@/lib/flow";
+import { askNotificationPermission } from "@/lib/hooks";
 import type { Task } from "@/lib/types";
+import { IdleMenu } from "./IdleMenu";
 import { BoardBadge, DeptChip, DueBadge, IdleTimer, LevelBadge, PriorityPill, cx, markDone, useMC } from "./ui";
 
 export const LANE_LABELS: Record<Lane, string> = {
@@ -117,10 +122,11 @@ export function TaskCard({
         isBlocked(task) && "ring-1 ring-danger/30",
       )}
     >
+      {lane === "detour" && <DetourIdle task={task} />}
       <div className="flex items-start gap-2">
         <GripVertical className="mt-0.5 size-4 shrink-0 cursor-grab text-ink-3/50 opacity-0 transition-opacity group-hover:opacity-100" aria-hidden />
         <div className="min-w-0 flex-1 space-y-1.5">
-          <p className={cx("font-medium leading-snug text-ink", dense ? "text-[13.5px]" : "text-sm")}>{task.name}</p>
+          <p className={cx("font-medium leading-snug text-ink", dense ? "text-[13.5px]" : "text-sm", lane === "detour" && "pr-20")}>{task.name}</p>
           <ParentLine task={task} />
           <TaskMeta task={task} />
           {task.idleSince && <IdleTimer task={task} />}
@@ -183,6 +189,71 @@ export function TaskCard({
         </CardButton>
       </div>
     </article>
+  );
+}
+
+/**
+ * Top-right of a Working on noise card. Idle hands the task to AI with a reminder to check the
+ * session; the card stays in Working on noise. While idle it offers "Back to it".
+ */
+function DetourIdle({ task }: { task: Task }) {
+  const { tasks, today, apply } = useMC();
+  // Where to draw the menu. It goes in a portal: lanes are their own stacking layers, so a
+  // menu inside the card would slide under the lane below.
+  const [at, setAt] = useState<{ top: number; right: number } | null>(null);
+  const busy = task.id.startsWith("tmp-");
+  useEffect(() => {
+    if (!at) return;
+    const close = () => setAt(null);
+    window.addEventListener("scroll", close, { passive: true });
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close);
+      window.removeEventListener("resize", close);
+    };
+  }, [at]);
+  return (
+    <div className="absolute right-2.5 top-2.5 z-10">
+      {task.idleSince ? (
+        <button
+          onClick={() => apply(resumeIdle(tasks, task, today))}
+          aria-label={`Back to "${task.name}": stop the idle timer`}
+          title="Back to it: stop the idle timer"
+          className="inline-flex h-8 items-center gap-1 rounded-full bg-primary/20 px-2.5 text-xs font-semibold text-primary-hi hover:bg-primary/35"
+        >
+          <Play className="size-3.5" /> Back to it
+        </button>
+      ) : (
+        <button
+          disabled={busy}
+          onClick={(e) => {
+            if (at) return setAt(null);
+            const r = e.currentTarget.getBoundingClientRect();
+            setAt({ top: r.bottom + 6, right: window.innerWidth - r.right });
+          }}
+          aria-expanded={!!at}
+          aria-label={`Idle "${task.name}": handed to AI, remind me to check the session`}
+          title="Idle: handed to AI. Set when to check the session again. It stays in Working on noise."
+          className="inline-flex h-8 items-center gap-1 rounded-full px-2.5 text-xs font-semibold text-primary-hi glass-chip hover:bg-primary/25 disabled:opacity-40"
+        >
+          <Bot className="size-3.5" /> Idle
+        </button>
+      )}
+      {at &&
+        createPortal(
+          <IdleMenu
+            className="fixed"
+            style={{ top: Math.min(at.top, window.innerHeight - 260), right: Math.max(8, at.right) }}
+            onClose={() => setAt(null)}
+            onPick={(min) => {
+              setAt(null);
+              if (min) askNotificationPermission();
+              apply(idle(tasks, task, today, min));
+            }}
+          />,
+          document.body,
+        )}
+    </div>
   );
 }
 

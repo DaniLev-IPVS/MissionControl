@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { Bot, X } from "lucide-react";
 import { LEVEL_LABELS, type Level } from "@/lib/config";
 import { addDays, done, openUnder, type Plan } from "@/lib/flow";
 import { formatElapsed, useNow } from "@/lib/hooks";
@@ -130,12 +130,16 @@ export function IdleTimer({ task, large = false }: { task: Task; large?: boolean
         large ? "px-3 py-1 text-sm" : "px-2 py-0.5 text-[11px]",
         late ? "bg-warning/20 text-warning ring-1 ring-warning/40" : "bg-primary/18 text-primary-hi ring-1 ring-primary/35",
       )}
-      title={task.idleReminder ? `Reminder at ${new Date(task.idleReminder).toLocaleTimeString()}` : "Idle"}
+      title={
+        task.idleReminder
+          ? `Handed to AI. Check the session at ${new Date(task.idleReminder).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+          : "Handed to AI, no reminder set"
+      }
     >
-      <span className={cx("size-1.5 rounded-full bg-current", !late && "animate-pulse")} />
+      <Bot className={cx(large ? "size-4" : "size-3", !late && "animate-pulse")} aria-hidden />
       idle {formatElapsed(elapsed)}
-      {remind !== null && !late && <span className="font-normal opacity-70">· ⏰ {formatElapsed(remind)}</span>}
-      {late && <span className="font-normal">· time&apos;s up</span>}
+      {remind !== null && !late && <span className="font-normal opacity-70">· check in {formatElapsed(remind)}</span>}
+      {late && <span className="font-normal">· check the session</span>}
     </span>
   );
 }

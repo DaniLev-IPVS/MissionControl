@@ -172,7 +172,7 @@ export function useReminders(tasks: Task[]) {
       markFired(reminderKey(t));
       if (typeof Notification !== "undefined" && Notification.permission === "granted") {
         try {
-          new Notification("Back to it", { body: t.name, tag: t.id });
+          new Notification("Check the session", { body: t.name, tag: t.id });
         } catch {}
       }
     }
