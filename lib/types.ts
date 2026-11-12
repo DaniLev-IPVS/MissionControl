@@ -26,6 +26,10 @@ export type Task = {
   doneAt: string | null;
   doneAs: "Signal" | "Noise" | null;
   missedOn: string | null; // last day it was planned but not finished (YYYY-MM-DD)
+  /** Delegated: still yours, someone else is doing it. When it was handed over (ISO); null/absent = not delegated. */
+  delegatedAt?: string | null;
+  /** When an answer is expected: a day (YYYY-MM-DD) or an exact time (ISO). Optional. */
+  expectBy?: string | null;
   createdAt: string;
   editedAt: string;
 };
@@ -90,6 +94,8 @@ export type TaskPatch = Partial<
     | "doneAt"
     | "doneAs"
     | "missedOn"
+    | "delegatedAt"
+    | "expectBy"
   >
 >;
 

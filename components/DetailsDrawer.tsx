@@ -3,10 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { ExternalLink, X } from "lucide-react";
 import { LEVEL_LABELS, PRIORITIES, STATUS_GROUPS } from "@/lib/config";
-import { laneOf } from "@/lib/flow";
+import { delegate, laneOf, undelegate } from "@/lib/flow";
 import type { Task, TaskPatch } from "@/lib/types";
 import { LANE_LABELS } from "./TaskCard";
-import { DeptChip, IdleTimer, LevelBadge, cx, markDone, useLatest, useMC } from "./ui";
+import { DeptChip, ExpectByField, IdleTimer, LevelBadge, Switch, cx, markDone, useLatest, useMC } from "./ui";
 
 export function DetailsDrawer({ task, onClose }: { task: Task; onClose: () => void }) {
   const { apply, tasks, taskById, titleOf, deptName, today } = useMC();
@@ -125,6 +125,27 @@ export function DetailsDrawer({ task, onClose }: { task: Task; onClose: () => vo
               <span className="text-ink-2">{task.noise ? "Unplanned / pop-up" : "Planned"}</span>
             </label>
           </dd>
+          <dt className="text-ink-3">Delegated</dt>
+          <dd className="flex items-center gap-2">
+            <Switch
+              checked={!!task.delegatedAt}
+              onChange={(on) => apply(on ? delegate(tasks, task, today) : undelegate(task))}
+              label="Delegated to someone"
+            />
+            <span className="text-ink-2">
+              {task.delegatedAt
+                ? `Someone else is on it, since ${new Date(task.delegatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+                : "No, it's on me"}
+            </span>
+          </dd>
+          {task.delegatedAt && (
+            <>
+              <dt className="text-ink-3">Answer by</dt>
+              <dd>
+                <ExpectByField task={task} />
+              </dd>
+            </>
+          )}
           <dt className="text-ink-3">Sprint</dt>
           <dd className="text-ink-2">{task.sprintId ? titleOf(task.sprintId) : "None"}</dd>
           <dt className="text-ink-3">Estimate</dt>

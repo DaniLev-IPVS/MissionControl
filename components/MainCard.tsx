@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Bot, Check, Crosshair, Info, OctagonAlert, Scissors, Sparkles, Waves } from "lucide-react";
-import { autofill, backToNoise, blocked, idle, isPopupSignal, sections } from "@/lib/flow";
+import { autofill, backToNoise, blocked, delegate, idle, isPopupSignal, sections } from "@/lib/flow";
 import { askNotificationPermission } from "@/lib/hooks";
 import type { Task } from "@/lib/types";
 import { IdleMenu } from "./IdleMenu";
@@ -139,7 +139,7 @@ export function MainCard({ task, onDropTask }: { task: Task | null; onDropTask: 
             <ActionButton
               icon={<Bot className="size-5" />}
               label="Idle"
-              hint="Handed to AI: set when to check the session again"
+              hint="Handed to AI or delegated to someone: set when to check back"
               tone="primary"
               onClick={() => setIdleOpen((o) => !o)}
               expanded={idleOpen}
@@ -152,6 +152,11 @@ export function MainCard({ task, onDropTask }: { task: Task | null; onDropTask: 
                   setIdleOpen(false);
                   if (min) askNotificationPermission();
                   apply(idle(tasks, task, today, min));
+                }}
+                onDelegate={(when) => {
+                  setIdleOpen(false);
+                  askNotificationPermission();
+                  apply(delegate(tasks, task, today, when));
                 }}
               />
             )}

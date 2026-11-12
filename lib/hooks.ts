@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { expectAt } from "./flow";
 import type { Task } from "./types";
 
 // ---- A shared 1-second clock ----------------------------------------------------
@@ -146,10 +147,17 @@ export function askNotificationPermission() {
   }
 }
 
-export const reminderKey = (t: Task) => `${t.id}:${t.idleReminder}`;
+// Two kinds of reminder, one per task: an AI session to go back and check (idle, with a
+// reminder time), or a follow-up on a delegated task once its answer is expected.
+export const reminderKey = (t: Task) => (t.delegatedAt ? `${t.id}:d:${t.expectBy}` : `${t.id}:${t.idleReminder}`);
+/** When the task's reminder is (or was) due, in ms. Null when it has none. */
+export function reminderAt(t: Task): number | null {
+  if (t.delegatedAt) return expectAt(t.expectBy);
+  return t.idleSince && t.idleReminder ? Date.parse(t.idleReminder) : null;
+}
 
 /**
- * Idle tasks whose reminder time has passed (until dismissed). Rings once per
+ * Tasks whose reminder time has passed (until dismissed). Rings once per
  * reminder: a chime, plus a system notification when permission was granted.
  */
 export function useReminders(tasks: Task[]) {
@@ -157,9 +165,10 @@ export function useReminders(tasks: Task[]) {
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
 
   const due = nowMs
-    ? tasks.filter(
-        (t) => t.idleSince && t.idleReminder && Date.parse(t.idleReminder) <= nowMs && !dismissed.has(reminderKey(t)),
-      )
+    ? tasks.filter((t) => {
+        const at = reminderAt(t);
+        return at !== null && at <= nowMs && !dismissed.has(reminderKey(t));
+      })
     : [];
   const dueKeys = due.map(reminderKey).join("|");
 
@@ -172,7 +181,7 @@ export function useReminders(tasks: Task[]) {
       markFired(reminderKey(t));
       if (typeof Notification !== "undefined" && Notification.permission === "granted") {
         try {
-          new Notification("Check the session", { body: t.name, tag: t.id });
+          new Notification(t.delegatedAt ? "Follow up: you delegated this" : "Check the session", { body: t.name, tag: t.id });
         } catch {}
       }
     }
@@ -185,6 +194,6 @@ export function useReminders(tasks: Task[]) {
     [],
   );
   // A reminder's due time is when it first rang: after a few minutes as a toast it moves to the bell.
-  const dueAt = useCallback((t: Task) => (t.idleReminder ? Date.parse(t.idleReminder) : 0), []);
+  const dueAt = useCallback((t: Task) => reminderAt(t) ?? 0, []);
   return { due, dismiss, dueAt };
 }

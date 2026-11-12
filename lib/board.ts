@@ -2,6 +2,7 @@ import "server-only";
 import { cacheLife, cacheTag } from "next/cache";
 import { BOARD_TAG, TIME_ZONE, USE_MOCK } from "./config";
 import { DAY_LOOKBACK, workingDay } from "./days";
+import { getDelegations, type Delegation } from "./delegation";
 import { addDays } from "./flow";
 import { mockStore, mockTree } from "./mock";
 import { getWorkingUntil } from "./overtime";
@@ -84,6 +85,14 @@ async function getOvertime(day: string): Promise<string | null> {
   return getWorkingUntil(day);
 }
 
+/** Delegated tasks (who is waiting on someone else), by task id. */
+async function getDelegated(): Promise<Record<string, Delegation>> {
+  "use cache: remote";
+  cacheTag(BOARD_TAG, "delegations");
+  cacheLife({ revalidate: 30, expire: 600 });
+  return getDelegations();
+}
+
 async function getTree(): Promise<TreeTask[]> {
   "use cache: remote";
   cacheTag(BOARD_TAG, "tree");
@@ -125,13 +134,14 @@ function startOfDay(day: string, timeZone = TIME_ZONE) {
 
 export async function getBoard(): Promise<Board> {
   const today = todayInZone();
-  const [open, departments, currentSprintId, days] = await Promise.all([
+  const [open, departments, currentSprintId, days, delegated] = await Promise.all([
     getOpenTasks(),
     getDepartments(),
     getCurrentSprintId(),
     getDaysSoft(addDays(today, -DAY_LOOKBACK)),
+    USE_MOCK ? ({} as Record<string, Delegation>) : getDelegated(),
   ]);
-  const tasks = fileShared(open.value, departments);
+  const tasks = fileShared(open.value, departments).map((t) => (delegated[t.id] ? { ...t, ...delegated[t.id] } : t));
   const warnings = [...open.warnings, ...days.warnings];
   // A day that wasn't ended keeps running past midnight: it stays the day on the board, with
   // everything finished since it began, until it is ended (by hand, or by the midnight check).

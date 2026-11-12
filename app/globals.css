@@ -20,6 +20,7 @@
   --color-signal: #5b87ff;
   --color-noise: #e89558;
   --color-popup: #f2d45c;        /* a pop-up that was sent to signal, 12.9:1 on bg */
+  --color-delegated: #f29bd4;    /* delegated to someone: yours, but in their hands, 10.1:1 on bg */
   /* Chart marks (validated pair on the dark surface: CVD ΔE 27, L in band). */
   --color-chart-signal: #5b87ff;
   --color-chart-noise: #d27a42;

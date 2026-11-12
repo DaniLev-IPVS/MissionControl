@@ -7,6 +7,7 @@ import { AUTH_COOKIE, adminCredentials, safeEqual, sessionToken } from "@/lib/au
 import { getCurrentSprintId, getHistory, todayInZone } from "@/lib/board";
 import { ALL_STATUSES, BOARD_TAG, FOCUS, LEVELS, PRIORITIES, USE_MOCK } from "@/lib/config";
 import { DAY_LOOKBACK, PUSH_MIN, workingDay } from "@/lib/days";
+import { saveDelegation } from "@/lib/delegation";
 import { mockCreate, mockCreateDay, mockUpdate, mockUpdateDay } from "@/lib/mock";
 import { setWorkingUntil } from "@/lib/overtime";
 import { createDay, createTaskInNotion, updateDay, updateTaskInNotion } from "@/lib/notion";
@@ -66,6 +67,14 @@ function cleanPatch(p: TaskPatch): TaskPatch {
   if (p.missedOn !== undefined) {
     if (p.missedOn !== null && !DAY.test(p.missedOn)) throw new Error("Bad missed date");
     c.missedOn = p.missedOn;
+  }
+  if (p.delegatedAt !== undefined) {
+    if (p.delegatedAt !== null && !isISO(p.delegatedAt)) throw new Error("Bad delegated time");
+    c.delegatedAt = p.delegatedAt;
+  }
+  if (p.expectBy !== undefined) {
+    if (p.expectBy !== null && !DAY.test(p.expectBy) && !isISO(p.expectBy)) throw new Error("Bad expected date");
+    c.expectBy = p.expectBy;
   }
   if (p.doneAs !== undefined) {
     if (p.doneAs !== null && !oneOf(["Signal", "Noise"], p.doneAs)) throw new Error("Bad done as");
@@ -141,8 +150,21 @@ async function writeChanges(changes: Change[], creates: NewTask[]) {
     try {
       if (USE_MOCK) mockUpdate(c.id, c.patch);
       else {
-        const warning = await updateTaskInNotion(c.id, c.patch);
-        if (warning) warnings.add(warning);
+        // Delegation lives in the database, everything else in Notion.
+        const { delegatedAt, expectBy, ...rest } = c.patch;
+        if (delegatedAt !== undefined || expectBy !== undefined) {
+          try {
+            await saveDelegation(c.id, { delegatedAt, expectBy });
+          } catch (err) {
+            console.error("saving a delegation failed", c.id, err);
+            errors.push(`Couldn't save the delegated switch: ${err instanceof Error ? err.message : String(err)}`);
+            continue;
+          }
+        }
+        if (Object.keys(rest).length) {
+          const warning = await updateTaskInNotion(c.id, rest);
+          if (warning) warnings.add(warning);
+        }
       }
     } catch (err) {
       console.error("save failed", c.id, err);

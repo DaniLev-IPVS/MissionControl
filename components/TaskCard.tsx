@@ -2,10 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUpRight, Ban, Bot, Check, ChevronDown, CornerDownRight, GripVertical, Info, Play, Undo2, Waves } from "lucide-react";
+import { ArrowUpRight, Ban, Bot, Check, ChevronDown, CornerDownRight, GripVertical, Info, Play, Undo2, Users, Waves } from "lucide-react";
 import { LEVEL_LABELS } from "@/lib/config";
 import {
   backToNoise,
+  delegate,
+  fmtExpect,
   isBlocked,
   isPopupSignal,
   laneOf,
@@ -71,6 +73,14 @@ export function TaskMeta({ task }: { task: Task }) {
         </span>
       ) : (
         task.noise && <span className="rounded-md bg-noise/15 px-1.5 py-0.5 text-[11px] font-semibold text-noise">Pop-up</span>
+      )}
+      {task.delegatedAt && (
+        <span
+          title={`Delegated ${new Date(task.delegatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}${task.expectBy ? `. Answer expected ${fmtExpect(task.expectBy)}` : ""}`}
+          className="inline-flex items-center gap-1 rounded-md bg-delegated/15 px-1.5 py-0.5 text-[11px] font-semibold text-delegated"
+        >
+          <Users className="size-3" aria-hidden /> Delegated
+        </span>
       )}
       {task.missedOn && (
         <span
@@ -243,12 +253,17 @@ function DetourIdle({ task }: { task: Task }) {
         createPortal(
           <IdleMenu
             className="fixed"
-            style={{ top: Math.min(at.top, window.innerHeight - 260), right: Math.max(8, at.right) }}
+            style={{ top: Math.min(at.top, window.innerHeight - 330), right: Math.max(8, at.right) }}
             onClose={() => setAt(null)}
             onPick={(min) => {
               setAt(null);
               if (min) askNotificationPermission();
               apply(idle(tasks, task, today, min));
+            }}
+            onDelegate={(when) => {
+              setAt(null);
+              askNotificationPermission();
+              apply(delegate(tasks, task, today, when));
             }}
           />,
           document.body,

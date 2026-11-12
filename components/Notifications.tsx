@@ -1,16 +1,18 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { AlarmClock, Bell, Bot, Play, X } from "lucide-react";
-import { isIdle, resumeIdle, snooze } from "@/lib/flow";
+import { AlarmClock, Bell, Bot, Check, Play, Users, X } from "lucide-react";
+import { addDays, expectAt, expectBy, fmtExpect, isDelegated, isIdle, resumeIdle, snooze, undelegate } from "@/lib/flow";
 import { formatElapsed, useNow } from "@/lib/hooks";
 import type { Task } from "@/lib/types";
-import { cx, useMC } from "./ui";
+import { ExpectByField, cx, useMC } from "./ui";
 
-// Reminders to go back and check an AI session. A new one pops up as a toast; after a few
-// minutes (or once newer ones arrive) it moves into the bell in the left rail, which keeps
-// bouncing until you deal with it. The rail and its panel are part of the page layout: opening
-// the panel pushes the board over instead of covering it.
+// Reminders: go back and check an AI session, or follow up on something you delegated once its
+// answer is expected. A new one pops up as a toast; after a few minutes (or once newer ones
+// arrive) it moves into the bell in the left rail, which keeps bouncing until you deal with it.
+// The panel's lower half lists what is out of your hands: handed to AI, then delegated to people
+// (since when, and when you expect an answer). The rail and its panel are part of the page
+// layout: opening the panel pushes the board over instead of covering it.
 
 const TOAST_MS = 3.5 * 60_000;
 const MAX_TOASTS = 3;
@@ -26,40 +28,72 @@ export function useToasts({ due, dueAt }: Pick<Props, "due" | "dueAt">) {
     .slice(0, MAX_TOASTS);
 }
 
+const shortDay = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
 export function ReminderToasts({ due, dismiss, dueAt }: Props) {
   const toasts = useToasts({ due, dueAt });
   const { tasks, today, apply } = useMC();
-  return toasts.map((t) => (
-    <div key={t.id} className="animate-pop flex items-center gap-3 rounded-2xl p-3.5 glass-float ring-1 ring-warning/40">
-      <AlarmClock className="size-5 shrink-0 text-warning" />
-      <div className="min-w-0 flex-1">
-        <p className="text-xs font-semibold text-warning">Check the session</p>
-        <p className="truncate text-sm text-ink">{t.name}</p>
+  return toasts.map((t) =>
+    isDelegated(t) ? (
+      <div key={t.id} className="animate-pop flex items-center gap-3 rounded-2xl p-3.5 glass-float ring-1 ring-delegated/45">
+        <Users className="size-5 shrink-0 text-delegated" />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold text-delegated">Follow up: you delegated this {shortDay(t.delegatedAt!)}</p>
+          <p className="truncate text-sm text-ink">{t.name}</p>
+        </div>
+        <button
+          onClick={() => {
+            dismiss(t);
+            apply(undelegate(t));
+          }}
+          title="You have the answer: it's no longer delegated"
+          className="h-9 rounded-full bg-primary px-3.5 text-xs font-semibold text-white"
+        >
+          Got it
+        </button>
+        <button
+          onClick={() => {
+            dismiss(t);
+            apply(expectBy(t, addDays(today, 1)));
+          }}
+          title="Remind me again tomorrow morning"
+          className="h-9 rounded-full px-3 text-xs font-semibold text-ink-2 glass-chip"
+        >
+          Tomorrow
+        </button>
       </div>
-      <button
-        onClick={() => {
-          dismiss(t);
-          apply(resumeIdle(tasks, t, today));
-        }}
-        className="h-9 rounded-full bg-primary px-3.5 text-xs font-semibold text-white"
-      >
-        Back to it
-      </button>
-      <button
-        onClick={() => {
-          dismiss(t);
-          apply(snooze(t, 5));
-        }}
-        className="h-9 rounded-full px-3 text-xs font-semibold text-ink-2 glass-chip"
-      >
-        +5 min
-      </button>
-    </div>
-  ));
+    ) : (
+      <div key={t.id} className="animate-pop flex items-center gap-3 rounded-2xl p-3.5 glass-float ring-1 ring-warning/40">
+        <AlarmClock className="size-5 shrink-0 text-warning" />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold text-warning">Check the session</p>
+          <p className="truncate text-sm text-ink">{t.name}</p>
+        </div>
+        <button
+          onClick={() => {
+            dismiss(t);
+            apply(resumeIdle(tasks, t, today));
+          }}
+          className="h-9 rounded-full bg-primary px-3.5 text-xs font-semibold text-white"
+        >
+          Back to it
+        </button>
+        <button
+          onClick={() => {
+            dismiss(t);
+            apply(snooze(t, 5));
+          }}
+          className="h-9 rounded-full px-3 text-xs font-semibold text-ink-2 glass-chip"
+        >
+          +5 min
+        </button>
+      </div>
+    ),
+  );
 }
 
 export function NotificationRail({ due, dismiss, dueAt, open, setOpen }: Props & { open: boolean; setOpen: (open: boolean) => void }) {
-  const { tasks, today, apply } = useMC();
+  const { tasks, today, apply, openDetails } = useMC();
   const now = useNow();
   const panel = useRef<HTMLElement>(null);
 
@@ -78,8 +112,13 @@ export function NotificationRail({ due, dismiss, dueAt, open, setOpen }: Props &
   const dueIds = new Set(due.map((t) => t.id));
   // Everything still handed to AI, soonest check-in first.
   const handedOff = tasks
-    .filter((t) => isIdle(t) && !dueIds.has(t.id))
+    .filter((t) => isIdle(t) && !isDelegated(t) && !dueIds.has(t.id))
     .sort((a, b) => (a.idleReminder ?? "~").localeCompare(b.idleReminder ?? "~"));
+  // Everything delegated to someone, whether or not it's in a lane today: soonest answer first,
+  // then the ones without a date, oldest first.
+  const delegated = tasks
+    .filter(isDelegated)
+    .sort((a, b) => (expectAt(a.expectBy) ?? Infinity) - (expectAt(b.expectBy) ?? Infinity) || a.delegatedAt!.localeCompare(b.delegatedAt!));
   const count = needsYou.length;
 
   return (
@@ -89,7 +128,7 @@ export function NotificationRail({ due, dismiss, dueAt, open, setOpen }: Props &
         onClick={() => setOpen(!open)}
         aria-expanded={open}
         aria-controls="notifications-panel"
-        aria-label={count ? `Notifications: ${count} session${count === 1 ? "" : "s"} to check` : "Notifications"}
+        aria-label={count ? `Notifications: ${count} to check` : "Notifications"}
         title={count ? `${count} to check` : "Notifications"}
         className={cx(
           "relative grid size-10 place-items-center rounded-full transition-colors sm:size-11",
@@ -134,7 +173,44 @@ export function NotificationRail({ due, dismiss, dueAt, open, setOpen }: Props &
                 <p className="text-sm text-ink-3">Nothing to check right now.</p>
               ) : (
                 <ul className="space-y-2">
-                  {needsYou.map((t) => (
+                  {needsYou.map((t) =>
+                    isDelegated(t) ? (
+                      <li key={t.id} className="rounded-2xl p-3 glass-chip ring-1 ring-delegated/40">
+                        <p className="text-sm font-medium leading-snug text-ink">{t.name}</p>
+                        <p className="mt-0.5 text-xs text-ink-3">
+                          Follow up · delegated {shortDay(t.delegatedAt!)} · answer was expected {fmtExpect(t.expectBy!)}
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          <button
+                            onClick={() => {
+                              dismiss(t);
+                              apply(undelegate(t));
+                            }}
+                            title="You have the answer: it's no longer delegated"
+                            className="inline-flex h-8 items-center gap-1 rounded-full bg-primary px-3 text-xs font-semibold text-white"
+                          >
+                            <Check className="size-3.5" /> Got it
+                          </button>
+                          <button
+                            onClick={() => {
+                              dismiss(t);
+                              apply(expectBy(t, addDays(today, 1)));
+                            }}
+                            title="Remind me again tomorrow morning"
+                            className="h-8 rounded-full px-3 text-xs font-semibold text-ink-2 glass-chip hover:text-ink"
+                          >
+                            Tomorrow
+                          </button>
+                          <button
+                            onClick={() => dismiss(t)}
+                            title="Hide this reminder. The task stays delegated."
+                            className="h-8 rounded-full px-3 text-xs font-semibold text-ink-3 hover:bg-white/10 hover:text-ink"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </li>
+                    ) : (
                     <li key={t.id} className="rounded-2xl p-3 glass-chip ring-1 ring-warning/30">
                       <p className="text-sm font-medium leading-snug text-ink">{t.name}</p>
                       <p className="mt-0.5 text-xs text-ink-3">
@@ -168,7 +244,8 @@ export function NotificationRail({ due, dismiss, dueAt, open, setOpen }: Props &
                         </button>
                       </div>
                     </li>
-                  ))}
+                    ),
+                  )}
                 </ul>
               )}
             </section>
@@ -188,6 +265,43 @@ export function NotificationRail({ due, dismiss, dueAt, open, setOpen }: Props &
                         <span className="shrink-0 font-mono text-[11px] text-ink-3">
                           {left !== null && left > 0 ? `check in ${formatElapsed(left)}` : `idle ${formatElapsed(now - Date.parse(t.idleSince!))}`}
                         </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
+
+            <section aria-label="Delegated">
+              <h3 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-delegated">Delegated · {delegated.length}</h3>
+              {delegated.length === 0 ? (
+                <p className="text-sm text-ink-3">Nothing is with someone else. Switch a task to Delegated when you hand it over.</p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {delegated.map((t) => {
+                    const at = expectAt(t.expectBy);
+                    const late = at !== null && at <= now;
+                    return (
+                      <li key={t.id} className={cx("rounded-xl px-3 py-2.5 glass-chip", late && "ring-1 ring-delegated/40")}>
+                        <div className="flex items-start gap-2">
+                          <Users className="mt-0.5 size-3.5 shrink-0 text-delegated" aria-hidden />
+                          <button onClick={() => openDetails(t.id)} className="min-w-0 flex-1 text-left text-sm leading-snug text-ink-2 hover:text-ink hover:underline">
+                            {t.name}
+                          </button>
+                          <button
+                            onClick={() => apply(undelegate(t))}
+                            aria-label={`Got the answer on "${t.name}": no longer delegated`}
+                            title="Got the answer: no longer delegated"
+                            className="-mr-1 -mt-0.5 grid size-7 shrink-0 place-items-center rounded-full text-ink-3 hover:bg-success/15 hover:text-success"
+                          >
+                            <Check className="size-3.5" />
+                          </button>
+                        </div>
+                        <p className={cx("mt-1 pl-[22px] text-[11px]", late ? "font-semibold text-delegated" : "text-ink-3")}>
+                          Delegated {shortDay(t.delegatedAt!)}
+                          {t.expectBy ? ` · ${late ? "answer was expected" : "answer by"} ${fmtExpect(t.expectBy)}` : " · no answer date yet"}
+                        </p>
+                        <ExpectByField task={t} className="mt-1.5 flex-nowrap pl-[22px]" />
                       </li>
                     );
                   })}

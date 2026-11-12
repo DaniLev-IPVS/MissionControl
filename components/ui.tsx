@@ -1,9 +1,9 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
-import { Bot, X } from "lucide-react";
+import { Bot, Users, X } from "lucide-react";
 import { LEVEL_LABELS, type Level } from "@/lib/config";
-import { addDays, done, openUnder, type Plan } from "@/lib/flow";
+import { addDays, done, expectAt, expectBy, fmtExpect, localDay, openUnder, type Plan } from "@/lib/flow";
 import { formatElapsed, useNow } from "@/lib/hooks";
 import type { Board, Task } from "@/lib/types";
 import type { Runner } from "@/lib/useBoard";
@@ -121,25 +121,105 @@ export function IdleTimer({ task, large = false }: { task: Task; large?: boolean
   const now = useNow();
   if (!task.idleSince || !now) return null;
   const elapsed = now - Date.parse(task.idleSince);
-  const remind = task.idleReminder ? Date.parse(task.idleReminder) - now : null;
+  // Delegated work waits on a person: the time that matters is when the answer is expected.
+  const delegated = !!task.delegatedAt;
+  const at = delegated ? expectAt(task.expectBy) : task.idleReminder ? Date.parse(task.idleReminder) : null;
+  const remind = at !== null ? at - now : null;
   const late = remind !== null && remind <= 0;
+  const Icon = delegated ? Users : Bot;
   return (
     <span
       className={cx(
         "inline-flex items-center gap-1.5 rounded-full font-mono font-semibold tabular-nums",
         large ? "px-3 py-1 text-sm" : "px-2 py-0.5 text-[11px]",
-        late ? "bg-warning/20 text-warning ring-1 ring-warning/40" : "bg-primary/18 text-primary-hi ring-1 ring-primary/35",
+        late
+          ? "bg-warning/20 text-warning ring-1 ring-warning/40"
+          : delegated
+            ? "bg-delegated/15 text-delegated ring-1 ring-delegated/35"
+            : "bg-primary/18 text-primary-hi ring-1 ring-primary/35",
       )}
       title={
-        task.idleReminder
-          ? `Handed to AI. Check the session at ${new Date(task.idleReminder).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
-          : "Handed to AI, no reminder set"
+        delegated
+          ? task.expectBy
+            ? `Delegated. Answer expected ${fmtExpect(task.expectBy)}`
+            : "Delegated, no answer date set"
+          : task.idleReminder
+            ? `Handed to AI. Check the session at ${new Date(task.idleReminder).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+            : "Handed to AI, no reminder set"
       }
     >
-      <Bot className={cx(large ? "size-4" : "size-3", !late && "animate-pulse")} aria-hidden />
-      idle {formatElapsed(elapsed)}
-      {remind !== null && !late && <span className="font-normal opacity-70">· check in {formatElapsed(remind)}</span>}
-      {late && <span className="font-normal">· check the session</span>}
+      <Icon className={cx(large ? "size-4" : "size-3", !late && !delegated && "animate-pulse")} aria-hidden />
+      {delegated ? "delegated" : "idle"} {formatElapsed(elapsed)}
+      {delegated ? (
+        late ? (
+          <span className="font-normal">· follow up</span>
+        ) : (
+          task.expectBy && <span className="font-normal opacity-70">· by {fmtExpect(task.expectBy)}</span>
+        )
+      ) : (
+        <>
+          {remind !== null && !late && <span className="font-normal opacity-70">· check in {formatElapsed(remind)}</span>}
+          {late && <span className="font-normal">· check the session</span>}
+        </>
+      )}
+    </span>
+  );
+}
+
+// ---- Delegated ---------------------------------------------------------------------------------
+/** A small on/off switch. */
+export function Switch({ checked, onChange, label, disabled }: { checked: boolean; onChange: (on: boolean) => void; label: string; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={cx(
+        "relative h-6 w-10 shrink-0 rounded-full transition-colors disabled:opacity-40",
+        checked ? "bg-delegated" : "bg-white/15 hover:bg-white/25",
+      )}
+    >
+      <span className={cx("absolute left-0.5 top-0.5 size-5 rounded-full bg-white shadow transition-transform", checked && "translate-x-4")} />
+    </button>
+  );
+}
+
+const pad = (n: number) => String(n).padStart(2, "0");
+/** Split a stored "expect by" into what a date field and a time field show. */
+function expectParts(value: string | null | undefined) {
+  if (!value) return { date: "", time: "" };
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return { date: value, time: "" };
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return { date: "", time: "" };
+  return { date: localDay(d), time: `${pad(d.getHours())}:${pad(d.getMinutes())}` };
+}
+/** A day alone, or a day and a time: the time is optional. */
+export const joinExpect = (date: string, time: string) => (!date ? null : time ? new Date(`${date}T${time}:00`).toISOString() : date);
+
+/** When the answer to a delegated task is expected: a date, and optionally a time. Saves on change. */
+export function ExpectByField({ task, className }: { task: Task; className?: string }) {
+  const { apply, today } = useMC();
+  const { date, time } = expectParts(task.expectBy);
+  const save = (d: string, t: string) => {
+    const next = joinExpect(d, d ? t : "");
+    if (next !== (task.expectBy ?? null)) apply(expectBy(task, next));
+  };
+  const field = "h-8 min-w-0 rounded-lg bg-white/5 px-2 text-xs text-ink ring-1 ring-white/10 [color-scheme:dark]";
+  return (
+    <span className={cx("inline-flex flex-wrap items-center gap-1.5", className)}>
+      <input type="date" value={date} min={today} onChange={(e) => save(e.target.value, time)} aria-label="Answer expected on" className={field} />
+      <input
+        type="time"
+        value={time}
+        // A time on its own means today.
+        onChange={(e) => save(date || today, e.target.value)}
+        aria-label="At (optional time)"
+        title="Optional time. Without one, you're reminded that morning."
+        className={field}
+      />
     </span>
   );
 }

@@ -37,6 +37,24 @@ export type Plan = { changes: Change[]; creates: NewTask[] };
 export const isBlocked = (t: Task) => isBlockedStatus(t.status);
 export const isIdle = (t: Task) => !!t.idleSince;
 const canLead = (t: Task) => !isBlocked(t) && !isIdle(t);
+/** Delegated: on you, but someone else is doing it. Idle then means "waiting on them", not on AI. */
+export const isDelegated = (t: Pick<Task, "delegatedAt">) => !!t.delegatedAt;
+const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+/** When the follow-up for a delegated task is due (ms). A day without a time means 9:00 that morning. */
+export function expectAt(expectBy: string | null | undefined): number | null {
+  if (!expectBy) return null;
+  const ms = Date.parse(DAY_ONLY.test(expectBy) ? `${expectBy}T09:00:00` : expectBy);
+  return Number.isNaN(ms) ? null : ms;
+}
+/** "Nov 15" for a day, "Nov 15, 3:00 PM" for an exact time. */
+export function fmtExpect(expectBy: string) {
+  const at = expectAt(expectBy);
+  if (at === null) return expectBy;
+  return new Date(at).toLocaleString(
+    undefined,
+    DAY_ONLY.test(expectBy) ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" },
+  );
+}
 
 export function localDay(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -196,6 +214,7 @@ const doneDetails = (task: Task, doneAs: "Signal" | "Noise", now: Date): TaskPat
   focusOrder: null,
   idleSince: null,
   idleReminder: null,
+  ...(task.delegatedAt ? { delegatedAt: null, expectBy: null } : {}),
 });
 
 /** How many open items marking this done would also close. */
@@ -256,6 +275,37 @@ export function idle(tasks: Task[], task: Task, today: string, remindInMin: numb
       },
     },
   ]);
+}
+
+/**
+ * Delegated = handed to a person. It stays yours, so it stays on the board, but it steps out of
+ * your hands the way idle does: Main moves aside, and a task in a lane waits on the Idle board.
+ * Unlike idle, the delegation outlives the day: it is kept until you switch it off or finish the
+ * task, and reminds you when the answer is expected. `expectBy` undefined keeps the date as is.
+ */
+export function delegate(tasks: Task[], task: Task, today: string, expectBy?: string | null, now = new Date()): Plan {
+  const patch: TaskPatch = { delegatedAt: task.delegatedAt ?? now.toISOString() };
+  if (expectBy !== undefined) patch.expectBy = expectBy;
+  if (task.focus) {
+    // Waiting on a person, not on an AI session: the "check the session" reminder goes.
+    patch.idleSince = task.idleSince ?? now.toISOString();
+    patch.idleReminder = null;
+    if (task.focus === "main") {
+      patch.focus = "dashboard";
+      patch.focusOrder = maxOrder(sections(tasks, today).dashboard) + 1;
+    }
+  }
+  return finish(tasks, today, [{ id: task.id, patch }]);
+}
+
+/** Switch delegated off. An idle task stays idle: it's waiting on AI again, not on a person. */
+export function undelegate(task: Task): Plan {
+  return { changes: [{ id: task.id, patch: { delegatedAt: null, expectBy: null } }], creates: [] };
+}
+
+/** Set, move or clear when the answer is expected. */
+export function expectBy(task: Task, when: string | null): Plan {
+  return { changes: [{ id: task.id, patch: { expectBy: when } }], creates: [] };
 }
 
 /** Bring any task to Main. The current Main takes its place (or the front of the Dashboard). */
