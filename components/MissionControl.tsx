@@ -601,7 +601,7 @@ export default function MissionControl() {
       {/* ---- Overlays ---- */}
       <div className="fixed inset-x-4 bottom-4 z-40 mx-auto flex max-w-md flex-col gap-2" aria-live="assertive">
         {reminders.map((t) => (
-          <div key={t.id} className="animate-pop flex items-center gap-3 rounded-2xl p-3.5 glass-strong ring-1 ring-warning/40">
+          <div key={t.id} className="animate-pop flex items-center gap-3 rounded-2xl p-3.5 glass-float ring-1 ring-warning/40">
             <AlarmClock className="size-5 shrink-0 text-warning" />
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold text-warning">Back to it</p>
@@ -628,7 +628,7 @@ export default function MissionControl() {
           </div>
         ))}
         {saveError && (
-          <div role="alert" className="animate-pop flex items-center gap-3 rounded-2xl p-3.5 glass-strong ring-1 ring-danger/40">
+          <div role="alert" className="animate-pop flex items-center gap-3 rounded-2xl p-3.5 glass-float ring-1 ring-danger/40">
             <p className="flex-1 text-sm text-ink">{saveError}</p>
             <button onClick={clearSaveError} className="text-xs font-semibold text-ink-2 hover:text-ink">
               Dismiss
