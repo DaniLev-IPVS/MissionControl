@@ -105,7 +105,9 @@ export function PopupBar() {
           e.preventDefault();
           submit();
         }}
-        className="flex h-12 items-center gap-2 rounded-full pl-4 pr-1.5 glass ring-1 ring-noise/25 focus-within:ring-noise/60"
+        // The bar draws the focus ring, not the input inside it (the site-wide outline is
+        // unlayered, so the input needs `!` to drop it), or the ring cuts the bar in two.
+        className="flex h-12 items-center gap-2 rounded-full pl-4 pr-1.5 glass ring-1 ring-noise/25 transition-shadow has-[input:focus]:ring-2 has-[input:focus]:ring-primary-hi"
       >
         <Waves className="size-4 shrink-0 text-noise" aria-hidden />
         <input
@@ -118,7 +120,7 @@ export function PopupBar() {
           aria-label="A task that just came up"
           enterKeyHint="done"
           autoComplete="off"
-          className="h-full min-w-0 flex-1 bg-transparent text-sm text-ink placeholder:text-ink-3 focus:outline-none"
+          className="h-full min-w-0 flex-1 bg-transparent text-sm text-ink placeholder:text-ink-3 focus-visible:outline-none!"
         />
         {!text && (
           <kbd className="hidden rounded-md px-1.5 py-0.5 font-mono text-[11px] text-ink-3 ring-1 ring-white/12 sm:inline" aria-hidden>
