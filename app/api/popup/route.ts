@@ -3,20 +3,34 @@ import { z } from "zod";
 import { getBoard } from "@/lib/board";
 import { aiMode, generateJSON } from "@/lib/ai";
 import { companyForPrompt } from "@/lib/company";
-import { LEVEL_LABELS } from "@/lib/config";
-import type { PopupFiling, Task } from "@/lib/types";
+import { LEVELS, LEVEL_LABELS, type Level } from "@/lib/config";
+import type { PopupItem, Task } from "@/lib/types";
 
-// Files a pop-up typed into the top bar: which mission or project it belongs under, and
-// which department. The server reads the board itself, so the model only ever picks from
-// real items, by alias. Nothing is written here: the browser creates the task as noise.
+// Turns whatever was typed or dictated into the top bar into clean board items. Sonnet pulls
+// out each distinct thing that came up, names it as a short action, and files it under the
+// mission or project it belongs to (or a new one, when several things share a goal with no
+// home yet). The server reads the board itself, so the model only picks from real items, by
+// alias. Nothing is written here: the browser creates the items as noise.
 
-const Filing = z.object({
-  parent: z.string().nullable().describe("Alias of the mission or project this belongs under, or null"),
-  department: z.string().nullable().describe("Exact department name from the list, or null"),
-  due: z.string().nullable().describe("YYYY-MM-DD, only when the text itself states a deadline; otherwise null"),
+const MAX_TEXT = 4000;
+const MAX_ITEMS = 12;
+const RANK: Record<Level, number> = { project: 3, mission: 2, task: 1 };
+
+const Extracted = z.object({
+  items: z.array(
+    z.object({
+      key: z.string().describe("n1, n2, n3… in the order listed"),
+      name: z.string().describe("Short, clean name: an action for a task, an outcome for a mission or project"),
+      level: z.enum(LEVELS),
+      parent: z
+        .string()
+        .nullable()
+        .describe("Alias of an existing mission or project (h…), or the key of a new item listed earlier (n…), or null"),
+      department: z.string().nullable().describe("Exact department name from the list, or null"),
+      due: z.string().nullable().describe("YYYY-MM-DD, only when the text itself states a deadline; otherwise null"),
+    }),
+  ),
 });
-
-const UNFILED: PopupFiling = { parentId: null, departmentIds: [], due: null, where: "" };
 
 export async function POST(request: Request) {
   await connection();
@@ -26,27 +40,21 @@ export async function POST(request: Request) {
   } catch {
     return Response.json({ error: "bad json" }, { status: 400 });
   }
-  if (typeof name !== "string" || !name.trim()) return Response.json({ error: "Type a task first." }, { status: 400 });
-  const text = name.trim().slice(0, 500);
+  if (typeof name !== "string" || !name.trim()) return Response.json({ error: "Type something first." }, { status: 400 });
+  const text = name.trim().slice(0, MAX_TEXT);
+
+  const board = await getBoard().catch(() => null);
+  if (!board) return Response.json({ items: [verbatim(text)] });
+
+  // Homes an item can live under: open missions and projects.
+  const homes = board.tasks.filter((t) => (t.level === "mission" || t.level === "project") && !t.id.startsWith("tmp-"));
+  const deptName = new Map(board.departments.map((d) => [d.id, d.name]));
+  const deptByName = new Map(board.departments.map((d) => [d.name.trim().toLowerCase(), d.id]));
+
+  if (!aiMode()) return Response.json({ items: [keywordFiling(text, homes, board.departments, deptName)] });
 
   try {
-    const board = await getBoard();
-    // Homes a task can live under: open missions and projects.
-    const homes = board.tasks.filter((t) => (t.level === "mission" || t.level === "project") && !t.id.startsWith("tmp-"));
-    const byId = new Map(board.tasks.map((t) => [t.id, t]));
-    const deptName = new Map(board.departments.map((d) => [d.id, d.name]));
-    const deptByName = new Map(board.departments.map((d) => [d.name.trim().toLowerCase(), d.id]));
-
-    const answer = (parentId: string | null, deptId: string | null, due: string | null): PopupFiling => {
-      const parent = parentId ? byId.get(parentId) : undefined;
-      const departmentIds = deptId ? [deptId] : (parent?.departmentIds.slice(0, 1) ?? []);
-      const where = [departmentIds[0] ? deptName.get(departmentIds[0]) : null, parent?.name].filter(Boolean).join(" › ");
-      return { parentId: parent?.id ?? null, departmentIds, due: due && /^\d{4}-\d{2}-\d{2}$/.test(due) ? due : null, where };
-    };
-
-    if (!aiMode()) return Response.json(keywordFiling(text, homes, board.departments, answer));
-
-    const alias = new Map(homes.map((t, i) => [`h${i + 1}`, t.id]));
+    const alias = new Map(homes.map((t, i) => [`h${i + 1}`, t]));
     const aliasOf = new Map(homes.map((t, i) => [t.id, `h${i + 1}`]));
     const line = (t: Task) =>
       [
@@ -60,39 +68,98 @@ export async function POST(request: Request) {
         .join(" | ");
 
     const output = await generateJSON({
+      fast: true,
       effort: "low",
-      schema: Filing,
-      system: `You file a pop-up: a task that just came up in the middle of the user's workday in Mission Control, a signal-over-noise focus board. It is saved as noise; your only job is to say where it belongs.
+      schema: Extracted,
+      system: `You sort a pop-up for Mission Control, a signal-over-noise focus board. The user typed or dictated whatever just came up in the middle of the workday. Turn it into clean board items. They are saved as noise (unplanned); you only decide what the items are and where they belong.
 Today is ${new Date().toDateString()}.
 
-- parent: the one mission (preferred) or project the task is clearly part of. If nothing clearly fits, use null: an unfiled pop-up is better than one filed in the wrong place.
-- department: the department it belongs to. Use the parent's department when you picked a parent. Null if unclear.
+Extract
+- One item per distinct thing that needs doing. Most pop-ups hold one; a voice dump can hold several. Don't break one action into steps, and don't invent work that wasn't mentioned.
+- Drop chatter that isn't an action ("the call went well"), unless it implies one.
+- If nothing is clearly actionable, still return one task that captures it.
+
+Name
+- Never copy the text verbatim. Write a short, clean name of 3 to 10 words: a task starts with a verb ("Send Dana the signed NDA"); a mission or project names the outcome ("Launch the Influity creator program").
+- Remove filler ("I need to", "also", "remind me", "um"), fix obvious dictation mistakes, keep the specifics: people, companies, amounts, dates.
+- Write in the language the user wrote in.
+
+Level (project > mission > task)
+- task: a concrete action, one sitting.
+- mission: a goal that takes several tasks.
+- project: a large effort made of several missions. Only when the user clearly describes a new big initiative.
+
+File
+- Put each item under the existing mission (preferred) or project it clearly belongs to, by alias. A task can sit under a mission or a project; a mission only under a project; a project has no parent.
+- Create a new mission only when two or more tasks in this pop-up share a goal that has no home on the board, or the user explicitly names a new goal. List it before its tasks and point the tasks at its key. Never wrap a single task in a new mission.
+- If nothing clearly fits, parent is null: an unfiled item is better than one filed in the wrong place.
+- department: the parent's department when there is a parent; otherwise the department it clearly belongs to, or null.
 - due: only when the text states a deadline ("by Friday", "tomorrow"). Never guess one.
 
 Departments: ${board.departments.map((d) => d.name).join(", ") || "none"}.
 
 Open missions and projects (alias | level | name | department | parent):
 ${homes.map(line).join("\n") || "(none)"}${await companyForPrompt()}`,
-      messages: [{ role: "user", content: `Pop-up task: ${text}` }],
+      messages: [{ role: "user", content: `Pop-up:\n${text}` }],
     });
 
-    const parentId = output.parent ? (alias.get(output.parent.trim()) ?? null) : null;
-    const deptId = output.department ? (deptByName.get(output.department.trim().toLowerCase()) ?? null) : null;
-    return Response.json(answer(parentId, deptId, output.due));
+    // Check every answer against the board: real parents only, levels in order, parents first.
+    const made = new Map<string, PopupItem>(); // model key -> accepted item
+    const items: PopupItem[] = [];
+    for (const raw of output.items.slice(0, MAX_ITEMS)) {
+      const clean = raw.name.replace(/\s+/g, " ").trim().slice(0, 200);
+      if (!clean || !LEVELS.includes(raw.level)) continue;
+      const p = raw.parent?.trim() ?? "";
+      const home = alias.get(p);
+      const fresh = made.get(p);
+      const homeOk = home?.level && RANK[home.level] > RANK[raw.level];
+      const freshOk = fresh && RANK[fresh.level] > RANK[raw.level];
+      const parentName = homeOk ? home!.name : freshOk ? fresh!.name : null;
+      const parentDepts = homeOk ? home!.departmentIds : freshOk ? fresh!.departmentIds : [];
+      const deptId = raw.department ? deptByName.get(raw.department.trim().toLowerCase()) : undefined;
+      const departmentIds = deptId ? [deptId] : parentDepts.slice(0, 1);
+      const item: PopupItem = {
+        key: `n${items.length + 1}`,
+        name: clean,
+        level: raw.level,
+        parentId: homeOk ? home!.id : null,
+        parentKey: freshOk ? fresh!.key : null,
+        departmentIds,
+        due: raw.due && /^\d{4}-\d{2}-\d{2}$/.test(raw.due) ? raw.due : null,
+        where: [departmentIds[0] ? deptName.get(departmentIds[0]) : null, parentName].filter(Boolean).join(" › "),
+      };
+      if (raw.key) made.set(raw.key.trim(), item);
+      items.push(item);
+    }
+    if (!items.length) return Response.json({ items: [keywordFiling(text, homes, board.departments, deptName)] });
+    return Response.json({ items });
   } catch (err) {
-    // The task still gets added: it just lands in Noise without a home.
-    console.error("filing a pop-up failed", err);
-    return Response.json(UNFILED);
+    // Still added: as typed, filed by shared words.
+    console.error("sorting a pop-up failed", err);
+    return Response.json({ items: [keywordFiling(text, homes, board.departments, deptName)] });
   }
 }
 
-/** No AI configured (local development): file by shared words with mission and department names. */
+function verbatim(text: string): PopupItem {
+  return {
+    key: "n1",
+    name: text.replace(/\s+/g, " ").slice(0, 200),
+    level: "task",
+    parentId: null,
+    parentKey: null,
+    departmentIds: [],
+    due: null,
+    where: "",
+  };
+}
+
+/** No AI (local development, or the call failed): one task as typed, filed by shared words. */
 function keywordFiling(
   text: string,
   homes: Task[],
   departments: { id: string; name: string }[],
-  answer: (parentId: string | null, deptId: string | null, due: string | null) => PopupFiling,
-): PopupFiling {
+  deptName: Map<string, string>,
+): PopupItem {
   const words = new Set(text.toLowerCase().match(/[a-z]{4,}/g) ?? []);
   const score = (name: string) => (name.toLowerCase().match(/[a-z]{4,}/g) ?? []).filter((w) => words.has(w)).length;
   const best = homes
@@ -101,5 +168,11 @@ function keywordFiling(
     // More shared words first; a mission beats its project on a tie.
     .sort((a, b) => b.n - a.n || Number(b.t.level === "mission") - Number(a.t.level === "mission"))[0]?.t;
   const dept = best ? null : departments.find((d) => score(d.name) > 0);
-  return answer(best?.id ?? null, dept?.id ?? null, null);
+  const departmentIds = best ? best.departmentIds.slice(0, 1) : dept ? [dept.id] : [];
+  return {
+    ...verbatim(text),
+    parentId: best?.id ?? null,
+    departmentIds,
+    where: [departmentIds[0] ? deptName.get(departmentIds[0]) : null, best?.name].filter(Boolean).join(" › "),
+  };
 }

@@ -2,33 +2,39 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CornerDownLeft, Loader2, Mic, MicOff, Waves } from "lucide-react";
-import { addTask } from "@/lib/flow";
+import { LEVEL_LABELS } from "@/lib/config";
+import { addTask, draftTask, type Lane, type Plan } from "@/lib/flow";
 import { useDictation } from "@/lib/hooks";
-import type { PopupFiling } from "@/lib/types";
+import type { PopupItem } from "@/lib/types";
 import { cx, useLatest, useMC } from "./ui";
 
-// The bar at the top of the page: type what just came up, press Enter. It is filed under
-// the mission and department it belongs to and lands in Noise, so the plan stays untouched
-// until you decide what to do with it.
+// The bar at the top of the page: type or dictate what just came up, press Enter. Sonnet pulls
+// out each thing in it, gives it a clean name, and files it under the mission and department it
+// belongs to (or a new mission when several things share a goal). The tasks land in Noise, so
+// the plan stays untouched until you decide what to do with them.
 
-type Entry = { key: number; name: string; state: "filing" | "added" | "failed"; where: string };
+type Shown = { name: string; level: PopupItem["level"]; where: string; container: boolean };
+type Entry = { key: number; raw: string; state: "sorting" | "added" | "failed"; items: Shown[] };
 
-const FILING_TIMEOUT_MS = 12_000;
-const SHOW_MS = 7000;
-const UNFILED: PopupFiling = { parentId: null, departmentIds: [], due: null, where: "" };
+const SORTING_TIMEOUT_MS = 25_000;
+const SHOW_MS = 9000;
 
-async function fileIt(name: string): Promise<PopupFiling> {
+async function sortIt(text: string): Promise<PopupItem[]> {
+  const asTyped: PopupItem[] = [
+    { key: "n1", name: text.slice(0, 200), level: "task", parentId: null, parentKey: null, departmentIds: [], due: null, where: "" },
+  ];
   try {
     const res = await fetch("/api/popup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-      signal: AbortSignal.timeout(FILING_TIMEOUT_MS),
+      body: JSON.stringify({ name: text }),
+      signal: AbortSignal.timeout(SORTING_TIMEOUT_MS),
     });
-    if (!res.ok) return UNFILED;
-    return { ...UNFILED, ...((await res.json()) as Partial<PopupFiling>) };
+    if (!res.ok) return asTyped;
+    const { items } = (await res.json()) as { items?: PopupItem[] };
+    return items?.length ? items : asTyped;
   } catch {
-    return UNFILED; // slow or offline: add it anyway, without a home
+    return asTyped; // slow or offline: add it anyway, as typed and without a home
   }
 }
 
@@ -59,28 +65,36 @@ export function PopupBar() {
   }, []);
 
   async function submit() {
-    const name = text.replace(/\s+/g, " ").trim();
-    if (!name) return;
+    const raw = text.replace(/\s+/g, " ").trim();
+    if (!raw) return;
     voice.stop();
     setText("");
     const key = ++seq.current;
-    setEntries((list) => [{ key, name, state: "filing" as const, where: "" }, ...list].slice(0, 4));
+    setEntries((list) => [{ key, raw, state: "sorting" as const, items: [] }, ...list].slice(0, 4));
 
-    const filing = await fileIt(name);
-    // The board may have moved on while this was being filed: read it fresh.
+    const items = await sortIt(raw);
+    // The board may have moved on while this was being sorted: read it fresh.
     const { tasks, today, apply, taskById } = latest.current;
-    const parentId = filing.parentId && taskById(filing.parentId) ? filing.parentId : null;
-    const ok = await apply(
-      addTask(tasks, today, {
-        name,
-        lane: "noise",
-        level: "task",
-        parentId,
-        departmentIds: filing.departmentIds,
-        due: filing.due,
-      }),
-    );
-    update(key, { state: ok ? "added" : "failed", where: parentId || filing.departmentIds.length ? filing.where : "" });
+    const hasKids = new Set(items.map((i) => i.parentKey).filter(Boolean));
+    const tempOf = new Map<string, string>(); // item key -> temp id of the new task
+    const plan: Plan = { changes: [], creates: [] };
+    const shown: Shown[] = [];
+    let current = tasks;
+    for (const item of items) {
+      const parentId = item.parentKey ? (tempOf.get(item.parentKey) ?? null) : item.parentId && taskById(item.parentId) ? item.parentId : null;
+      // A new mission or project that holds tasks from this pop-up is structure, not noise:
+      // its tasks carry the noise and show it as their parent.
+      const container = item.level !== "task" && hasKids.has(item.key);
+      const lane: Lane = container ? "backlog" : "noise";
+      const p = addTask(current, today, { name: item.name, lane, level: item.level, parentId, departmentIds: item.departmentIds, due: item.due });
+      plan.creates.push(...p.creates);
+      plan.changes.push(...p.changes);
+      if (p.creates[0]) tempOf.set(item.key, p.creates[0].tempId);
+      current = [...current, ...p.creates.map(draftTask)];
+      shown.push({ name: item.name, level: item.level, where: parentId ? item.where : item.where.split(" › ")[0] ?? "", container });
+    }
+    const ok = await apply(plan);
+    update(key, { state: ok ? "added" : "failed", items: shown });
     setTimeout(() => setEntries((list) => list.filter((e) => e.key !== key)), SHOW_MS);
   }
 
@@ -100,7 +114,7 @@ export function PopupBar() {
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === "Escape" && input.current?.blur()}
           placeholder={voice.listening ? "Listening…" : "Something came up? Type it and press Enter"}
-          title="Filed under the mission and department it belongs to, and added to Noise. Your plan stays as it is."
+          title="Sorted into clean tasks (and missions, when several things share a goal), filed where they belong and added to Noise. Your plan stays as it is."
           aria-label="A task that just came up"
           enterKeyHint="done"
           autoComplete="off"
@@ -139,33 +153,47 @@ export function PopupBar() {
 
       {entries.length > 0 && (
         <ul className="flex flex-wrap gap-1.5 px-1" aria-live="polite">
-          {entries.map((e) => (
-            <li
-              key={e.key}
-              className={cx(
-                "animate-pop inline-flex max-w-full items-center gap-1.5 rounded-full px-3 py-1.5 text-xs glass-chip",
-                e.state === "failed" ? "text-danger-hi" : "text-ink-2",
-              )}
-            >
-              {e.state === "filing" ? (
-                <Loader2 className="size-3.5 shrink-0 animate-spin text-noise" aria-hidden />
-              ) : (
-                <span className={cx("size-2 shrink-0 rounded-full", e.state === "failed" ? "bg-danger" : "bg-noise")} aria-hidden />
-              )}
-              <span className="truncate font-medium text-ink">{e.name}</span>
-              <span className="shrink-0 text-ink-3">
-                {e.state === "filing"
-                  ? "finding where it belongs…"
-                  : e.state === "failed"
-                    ? "couldn't be saved"
-                    : e.where
-                      ? `in Noise · ${e.where}`
-                      : "in Noise · no home found"}
-              </span>
-            </li>
-          ))}
+          {entries.flatMap((e) =>
+            e.state === "sorting" ? (
+              <Chip key={e.key} dot="spin" name={e.raw} note="sorting it out…" />
+            ) : (
+              e.items.map((it, i) => (
+                <Chip
+                  key={`${e.key}-${i}`}
+                  dot={e.state === "failed" ? "fail" : "ok"}
+                  name={it.name}
+                  badge={it.level !== "task" ? `New ${LEVEL_LABELS[it.level].toLowerCase()}` : undefined}
+                  note={
+                    e.state === "failed"
+                      ? "couldn't be saved"
+                      : `${it.container ? "on the board" : "in Noise"}${it.where ? ` · ${it.where}` : it.level === "task" ? " · no home found" : ""}`
+                  }
+                />
+              ))
+            ),
+          )}
         </ul>
       )}
     </section>
+  );
+}
+
+function Chip({ dot, name, note, badge }: { dot: "spin" | "ok" | "fail"; name: string; note: string; badge?: string }) {
+  return (
+    <li
+      className={cx(
+        "animate-pop inline-flex max-w-full items-center gap-1.5 rounded-full px-3 py-1.5 text-xs glass-chip",
+        dot === "fail" ? "text-danger-hi" : "text-ink-2",
+      )}
+    >
+      {dot === "spin" ? (
+        <Loader2 className="size-3.5 shrink-0 animate-spin text-noise" aria-hidden />
+      ) : (
+        <span className={cx("size-2 shrink-0 rounded-full", dot === "fail" ? "bg-danger" : "bg-noise")} aria-hidden />
+      )}
+      {badge && <span className="shrink-0 rounded-full bg-noise/20 px-1.5 py-px text-[10px] font-semibold text-noise">{badge}</span>}
+      <span className="truncate font-medium text-ink">{name}</span>
+      <span className="shrink-0 text-ink-3">{note}</span>
+    </li>
   );
 }

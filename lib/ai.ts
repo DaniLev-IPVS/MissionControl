@@ -13,6 +13,9 @@ import { z } from "zod";
 
 export const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL ?? "claude-opus-5-5";
 export const GATEWAY_MODEL = process.env.PLANNER_MODEL ?? "anthropic/claude-opus-5.5";
+// Lighter, faster model for small structured jobs (sorting pop-ups into tasks).
+export const ANTHROPIC_FAST_MODEL = process.env.ANTHROPIC_FAST_MODEL ?? "claude-sonnet-5-5";
+export const GATEWAY_FAST_MODEL = process.env.FAST_MODEL ?? "anthropic/claude-sonnet-5.5";
 
 export type AIMode = "anthropic" | "gateway" | null;
 export const currentModel = () => (aiMode() === "anthropic" ? ANTHROPIC_MODEL : aiMode() === "gateway" ? GATEWAY_MODEL : null);
@@ -32,18 +35,21 @@ export async function generateJSON<T>({
   messages,
   schema,
   effort = "medium",
+  fast = false,
 }: {
   system: string;
   messages: Msg[];
   schema: z.ZodType<T>;
   effort?: "low" | "medium" | "high";
+  /** Use the lighter model (Sonnet) instead of the planner model. */
+  fast?: boolean;
 }): Promise<T> {
   const mode = aiMode();
   if (!mode) throw new Error("AI is not configured");
 
   if (mode === "gateway") {
     const { output } = await generateText({
-      model: GATEWAY_MODEL,
+      model: fast ? GATEWAY_FAST_MODEL : GATEWAY_MODEL,
       system,
       messages,
       output: Output.object({ schema }),
@@ -54,9 +60,10 @@ export async function generateJSON<T>({
   client ??= new Anthropic(); // reads ANTHROPIC_API_KEY
   // Server-side fallback re-runs a declined request on Anthropic's recommended model.
   // Haiku has no server-side fallback, so it's left off there.
-  const canFallback = !ANTHROPIC_MODEL.startsWith("claude-haiku");
+  const model = fast ? ANTHROPIC_FAST_MODEL : ANTHROPIC_MODEL;
+  const canFallback = !model.startsWith("claude-haiku");
   const res = await client.beta.messages.create({
-    model: ANTHROPIC_MODEL,
+    model,
     max_tokens: 16000,
     system,
     messages,

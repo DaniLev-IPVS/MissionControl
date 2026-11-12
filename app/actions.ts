@@ -122,8 +122,13 @@ async function writeChanges(changes: Change[], creates: NewTask[]) {
 
   const created: { tempId: string; id: string }[] = [];
   const sprintId = cleanCreates.length ? await getCurrentSprintId() : null;
-  for (const t of cleanCreates) {
+  // A new item may sit under another one created in the same batch (a pop-up that became a
+  // mission with tasks): parents come first, so swap their temp id for the real one.
+  const realId = new Map<string, string>();
+  for (const draft of cleanCreates) {
+    const t = draft.parentId?.startsWith("tmp-") ? { ...draft, parentId: realId.get(draft.parentId) ?? null } : draft;
     const id = USE_MOCK ? mockCreate(t) : await createTaskInNotion(t, sprintId);
+    realId.set(t.tempId, id);
     created.push({ tempId: t.tempId, id });
   }
   // Sequential to stay under Notion's ~3 requests/second. One failure doesn't stop the rest.

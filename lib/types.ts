@@ -93,9 +93,16 @@ export type TaskPatch = Partial<
 
 export type Change = { id: string; patch: TaskPatch };
 
-/** Where a pop-up from the top bar belongs (answer of /api/popup). */
-export type PopupFiling = {
-  parentId: string | null;
+/**
+ * One item pulled out of a pop-up typed into the top bar (answer of /api/popup).
+ * A pop-up can hold several things; each becomes a cleanly named task, mission or project.
+ */
+export type PopupItem = {
+  key: string; // "n1", "n2"… unique within one answer
+  name: string; // rewritten as a short action, not the words as typed
+  level: Level;
+  parentId: string | null; // an existing mission or project on the board
+  parentKey: string | null; // or another item in this same answer (always listed before it)
   departmentIds: string[];
   due: string | null;
   where: string; // "Finance › Open the business bank account", or "" when unfiled
