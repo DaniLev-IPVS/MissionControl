@@ -112,7 +112,7 @@ export function TaskCard({
       data-task-id={task.id}
       data-index={index}
       className={cx(
-        "group relative rounded-2xl glass transition-[transform,background] duration-150 focus-within:z-20 hover:z-10 hover:-translate-y-px hover:bg-white/[0.07]",
+        "group relative min-w-0 rounded-2xl glass transition-[transform,background] duration-150 focus-within:z-20 hover:z-10 hover:-translate-y-px hover:bg-white/[0.07]",
         dense ? "p-3" : "p-3.5",
         pendingSave && "opacity-60",
         // A pop-up that was sent to signal: part of the plan now, but it wasn't in it this morning.

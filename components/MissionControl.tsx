@@ -27,7 +27,7 @@ import { CompanyView } from "./CompanyView";
 import { DaysView } from "./DaysView";
 import { DetailsDrawer } from "./DetailsDrawer";
 import { IdleBoard } from "./IdleBoard";
-import { NotificationBell, ReminderToasts } from "./Notifications";
+import { NotificationRail, ReminderToasts } from "./Notifications";
 import { PlanView } from "./PlanView";
 import { PopupBar } from "./PopupBar";
 import { SignOutDialog } from "./SignOutDialog";
@@ -65,6 +65,7 @@ export default function MissionControl() {
   const [view, setView] = useState<View>("focus");
   const [planning, setPlanning] = useState(false); // signing in: Plan view in "start my day" mode
   const [signingOut, setSigningOut] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
 
   // Keyboard: N = add, V = add by voice.
   useEffect(() => {
@@ -209,7 +210,10 @@ export default function MissionControl() {
 
   return (
     <MCContext.Provider value={ctx}>
-      <main className="mx-auto w-full max-w-[1440px] space-y-5 px-4 pb-24 pt-5 sm:px-6 lg:pt-8">
+      {/* Left rail (notification bell) and its panel are part of the layout: the board makes room. */}
+      <div className="flex min-h-dvh">
+      <NotificationRail {...reminders} open={notesOpen} setOpen={setNotesOpen} />
+      <main className={cx("mx-auto w-full min-w-0 max-w-[1440px] flex-1 space-y-5 px-4 pb-24 pt-5 sm:px-6 lg:pt-8", notesOpen && "max-md:hidden")}>
         {/* ---- Header ---- */}
         <header className="flex flex-wrap items-center gap-x-5 gap-y-3">
           <div className="mr-auto">
@@ -294,7 +298,7 @@ export default function MissionControl() {
         ) : null}
 
         {/* ---- Views ---- */}
-        <nav aria-label="Views" className="flex flex-wrap items-center gap-2">
+        <nav aria-label="Views" className="flex flex-wrap items-center gap-2 [&>[role=radiogroup]]:max-w-full [&>[role=radiogroup]]:overflow-x-auto [&>[role=radiogroup]]:[scrollbar-width:none] [&>[role=radiogroup]>*]:shrink-0">
           <Segmented
             label="View"
             value={view}
@@ -450,8 +454,8 @@ export default function MissionControl() {
         {view === "focus" && (
         <>
         {/* ---- Board ---- */}
-        <div className="grid gap-5 xl:grid-cols-12">
-          <div className="space-y-5 xl:col-span-8">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-5 xl:grid-cols-12">
+          <div className="min-w-0 space-y-5 xl:col-span-8">
             <MainCard task={s.main} onDropTask={(id) => {
               const t = tasks.find((x) => x.id === id);
               setDragId(null);
@@ -527,7 +531,7 @@ export default function MissionControl() {
             )}
           </div>
 
-          <div className="space-y-5 xl:col-span-4">
+          <div className="min-w-0 space-y-5 xl:col-span-4">
             {showNoise && detour.length > 0 && (
               <LaneSection
                 lane="detour"
@@ -605,6 +609,7 @@ export default function MissionControl() {
         </>
         )}
       </main>
+      </div>
 
       {/* ---- Overlays ---- */}
       <div className="fixed inset-x-4 bottom-4 z-40 mx-auto flex max-w-md flex-col gap-2" aria-live="assertive">
@@ -619,7 +624,6 @@ export default function MissionControl() {
         )}
       </div>
 
-      <NotificationBell {...reminders} />
       {detailsTask && <DetailsDrawer task={detailsTask} onClose={() => setDetailsId(null)} />}
       {signingOut && board!.day && <SignOutDialog onClose={() => setSigningOut(false)} />}
       {adding && <QuickAdd onClose={() => setAdding(null)} startListening={adding === "voice"} />}

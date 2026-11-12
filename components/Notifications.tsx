@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { AlarmClock, Bell, Bot, Play, X } from "lucide-react";
 import { isIdle, resumeIdle, snooze } from "@/lib/flow";
 import { formatElapsed, useNow } from "@/lib/hooks";
@@ -8,8 +8,9 @@ import type { Task } from "@/lib/types";
 import { cx, useMC } from "./ui";
 
 // Reminders to go back and check an AI session. A new one pops up as a toast; after a few
-// minutes (or once newer ones arrive) it moves into the bell on the side of the screen, which
-// keeps bouncing until you deal with it.
+// minutes (or once newer ones arrive) it moves into the bell in the left rail, which keeps
+// bouncing until you deal with it. The rail and its panel are part of the page layout: opening
+// the panel pushes the board over instead of covering it.
 
 const TOAST_MS = 3.5 * 60_000;
 const MAX_TOASTS = 3;
@@ -57,26 +58,21 @@ export function ReminderToasts({ due, dismiss, dueAt }: Props) {
   ));
 }
 
-export function NotificationBell({ due, dismiss, dueAt }: Props) {
+export function NotificationRail({ due, dismiss, dueAt, open, setOpen }: Props & { open: boolean; setOpen: (open: boolean) => void }) {
   const { tasks, today, apply } = useMC();
   const now = useNow();
-  const [open, setOpen] = useState(false);
-  const panel = useRef<HTMLDivElement>(null);
-  const bell = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLElement>(null);
 
   useEffect(() => {
     if (!open) return;
     panel.current?.focus({ preventScroll: true });
-    const close = (e: MouseEvent) =>
-      !panel.current?.contains(e.target as Node) && !bell.current?.contains(e.target as Node) && setOpen(false);
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", esc);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", esc);
+    const esc = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement;
+      if (e.key === "Escape" && !el.closest("[role=dialog], [role=menu]")) setOpen(false);
     };
-  }, [open]);
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [open, setOpen]);
 
   const needsYou = [...due].sort((a, b) => dueAt(b) - dueAt(a));
   const dueIds = new Set(due.map((t) => t.id));
@@ -88,14 +84,16 @@ export function NotificationBell({ due, dismiss, dueAt }: Props) {
 
   return (
     <>
+      <nav aria-label="Side rail" className="sticky top-0 z-30 flex h-dvh w-12 shrink-0 flex-col items-center border-r border-white/8 bg-black/25 pt-5 sm:w-14 lg:pt-8">
       <button
-        ref={bell}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => setOpen(!open)}
         aria-expanded={open}
+        aria-controls="notifications-panel"
         aria-label={count ? `Notifications: ${count} session${count === 1 ? "" : "s"} to check` : "Notifications"}
         title={count ? `${count} to check` : "Notifications"}
         className={cx(
-          "fixed right-3 top-[38%] z-40 grid size-12 place-items-center rounded-full glass-float transition-colors",
+          "relative grid size-10 place-items-center rounded-full transition-colors sm:size-11",
+          open ? "bg-white/12 ring-1 ring-white/20" : "glass-chip",
           count ? "text-warning ring-1 ring-warning/50" : "text-ink-2 hover:text-ink",
           count > 0 && !open && "animate-bell",
         )}
@@ -107,14 +105,15 @@ export function NotificationBell({ due, dismiss, dueAt }: Props) {
           </span>
         )}
       </button>
+      </nav>
 
       {open && (
-        <div
+        <aside
           ref={panel}
+          id="notifications-panel"
           tabIndex={-1}
-          role="dialog"
           aria-label="Notifications"
-          className="animate-pop fixed inset-y-3 right-3 z-50 flex w-[min(380px,calc(100vw-24px))] flex-col rounded-[26px] p-4 glass-float focus:outline-none"
+          className="sticky top-0 z-20 flex h-dvh w-[calc(100vw-3rem)] shrink-0 flex-col border-r border-white/8 bg-[rgb(14_17_28/0.6)] p-4 pt-5 focus:outline-none sm:w-[calc(100vw-3.5rem)] md:w-[340px] lg:pt-8"
         >
           <header className="mb-3 flex items-center gap-2">
             <Bell className="size-4 text-warning" />
@@ -196,7 +195,7 @@ export function NotificationBell({ due, dismiss, dueAt }: Props) {
               )}
             </section>
           </div>
-        </div>
+        </aside>
       )}
     </>
   );
