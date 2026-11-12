@@ -2,6 +2,7 @@ import { connection } from "next/server";
 import { z } from "zod";
 import { getBoard } from "@/lib/board";
 import { aiMode, currentModel, generateJSON } from "@/lib/ai";
+import { companyForPrompt } from "@/lib/company";
 import { historyForPrompt, saveRecommendation, savePlan, type RecItem } from "@/lib/history";
 import { DASHBOARD_SLOTS, LEVEL_LABELS, TODAY_TARGET } from "@/lib/config";
 import type { NewTask, Task } from "@/lib/types";
@@ -99,7 +100,9 @@ export async function POST(request: Request) {
       .join(" | ");
   };
 
-  const history = aiMode() ? await historyForPrompt(new Set(tasks.map((t) => t.id))) : "";
+  const [history, company] = aiMode()
+    ? await Promise.all([historyForPrompt(new Set(tasks.map((t) => t.id))), companyForPrompt()])
+    : ["", ""];
   const source = body.source === "voice" ? "voice" : "planner";
   const lastUser = messages[messages.length - 1].content;
   const asItems = (ids: string[], names: Map<string, string> = new Map()): RecItem[] =>
@@ -123,7 +126,7 @@ Departments: ${board.departments.map((d) => d.name).join(", ") || "none"}.
 Open tasks (alias | level | name | department | parent | priority | due | status):
 ${tasks.map(line).join("\n")}
 
-Current draft order: ${draft.map((id) => aliasOf.get(id)).join(", ") || "(empty)"}${historyBlock(history)}`;
+Current draft order: ${draft.map((id) => aliasOf.get(id)).join(", ") || "(empty)"}${company}${historyBlock(history)}`;
 
   if (!aiMode()) {
     const res = keywordFallback(lastUser, tasks, draft);
@@ -251,7 +254,7 @@ async function recommend() {
     return Response.json({ reply: note, picks });
   };
   if (!aiMode()) return fallback("AI isn't set up here, so these are ranked by priority, due date and what's in progress.");
-  const history = await historyForPrompt(new Set(tasks.map((t) => t.id)));
+  const [history, company] = await Promise.all([historyForPrompt(new Set(tasks.map((t) => t.id))), companyForPrompt()]);
 
   try {
     const output = await generateJSON({
@@ -263,7 +266,7 @@ Prefer actionable tasks (lowest level). Recommend a whole mission or project onl
 Skip Blocked items. Give each pick a short reason.
 
 Open items (alias | level | name | department | parent | priority | due | status | notes):
-${tasks.map(line).join("\n")}${historyBlock(history)}`,
+${tasks.map(line).join("\n")}${company}${historyBlock(history)}`,
       messages: [{ role: "user", content: "Recommend today's tasks." }],
     });
     const seen = new Set<string>();

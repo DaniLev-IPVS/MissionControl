@@ -1,6 +1,6 @@
 import "server-only";
 import { neon } from "@neondatabase/serverless";
-import { TIME_ZONE } from "./config";
+import { TIME_ZONE, USE_MOCK } from "./config";
 
 // AI recommendation history in Neon (Postgres): what the AI suggested each day, and what Dani
 // actually planned. The last 7 days go back into the planner prompts so it can see what it
@@ -11,7 +11,8 @@ import { TIME_ZONE } from "./config";
 export type RecItem = { id: string; name: string; level?: string | null; board?: string; why?: string };
 export type RecSource = "recommend" | "planner" | "voice";
 
-const url = () => process.env.DATABASE_URL;
+// On the mock board the task ids are fake, so nothing is saved or read back.
+const url = () => (USE_MOCK ? undefined : process.env.DATABASE_URL);
 let ready: Promise<void> | null = null;
 
 function db() {

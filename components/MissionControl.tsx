@@ -23,6 +23,7 @@ import { useNow, useReminders } from "@/lib/hooks";
 import type { Task } from "@/lib/types";
 import { useBoard } from "@/lib/useBoard";
 import { logout } from "@/app/actions";
+import { CompanyView } from "./CompanyView";
 import { DaysView } from "./DaysView";
 import { DetailsDrawer } from "./DetailsDrawer";
 import { PlanView } from "./PlanView";
@@ -36,7 +37,7 @@ import { DeptChip, MCContext, Segmented, cx, deptHue, useMC, type MC } from "./u
 
 type TypeFilter = "all" | "signal" | "noise";
 type SortKey = "flow" | "priority" | "due" | "level";
-type View = "focus" | "plan" | "timeline" | "days" | "tokens";
+type View = "focus" | "plan" | "timeline" | "days" | "tokens" | "company";
 
 const PRIORITY_RANK: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
 const LEVEL_RANK: Record<string, number> = { project: 0, mission: 1, task: 2 };
@@ -290,6 +291,7 @@ export default function MissionControl() {
               { value: "timeline", label: "Timeline" },
               { value: "days", label: "Days" },
               { value: "tokens", label: "Tokens" },
+              { value: "company", label: "Company" },
             ]}
           />
           {planning && view === "plan" && (
@@ -299,7 +301,7 @@ export default function MissionControl() {
           )}
         </nav>
 
-        {view !== "days" && view !== "tokens" && (
+        {view !== "days" && view !== "tokens" && view !== "company" && (
         <>
         {/* ---- Filters (folded behind a button on phones) ---- */}
         <button
@@ -426,6 +428,7 @@ export default function MissionControl() {
         {view === "timeline" && <TimelineView inDept={inDept} hideDone={hideDone} level={level} query={query} />}
         {view === "days" && <DaysView />}
         {view === "tokens" && <TokensView />}
+        {view === "company" && <CompanyView />}
 
         {view === "focus" && (
         <>

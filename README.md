@@ -33,6 +33,15 @@ The AI (planner chat, "Recommend me today's tasks", haiku; all in `lib/ai.ts`) c
 
 With neither, everything still works without AI: recommendations rank by priority and due date, the planner matches keywords, and the haiku is a fixed one.
 
+## Company: goals, roadmaps and priority
+
+The **Company** view holds the company master: the legal entities and brands, each project's goal, how we'll know we got there, a rough roadmap (steps and open problems), the team, open questions, and the priority order between projects. We work by position and pivot, so everything is editable, and a change of goal, measure, date, status, priority or roadmap is written to the **pivot log** on its own.
+
+- It lives in Neon (`company_entities`, `company_projects`, `company_roadmap`, `company_pivots`, `company_notes`), created on first use by `lib/company.ts`. Notion stays the source of truth for tasks; Neon is the source of truth for goals and roadmaps.
+- The AI planner and "Recommend me today's tasks" read it (`companyForPrompt`): the day should mostly move project #1, and work for lower-ranked projects counts as noise unless it's due, blocking someone, or asked for. A project is matched to its tasks by Notion department name.
+- **Private notes** (ownership, money) stay in the database and show only on the site.
+- `npm run company:sync` writes the readable copy into every project's local folder: `company/README.md`, `GOAL.md`, `ROADMAP.md`, `TEAM.md`, `PIVOTS.md`, plus a short block in that project's `CLAUDE.md` so its Claude knows the goal and where the project ranks. Mission Control gets `company/PORTFOLIO.md` (git-ignored, because this repo is public) and a block in `AGENTS.md` that carries no company data. Run it after the master changes (`-- --dry` shows what would change). It needs `DATABASE_URL` in `.env.local`.
+
 ## How sync works
 
 | Direction | How | Typical delay |
@@ -56,6 +65,8 @@ With neither, everything still works without AI: recommendations rank by priorit
 - `app/api/board/route.ts`: board JSON with ETag/304 support.
 - `app/api/notion/webhook/route.ts`: Notion webhook (handshake, signature check, cache expiry).
 - `proxy.ts` + `lib/auth.ts`: email/password login (from `ADMIN_EMAIL` / `ADMIN_PASSWORD`) protecting every page and API route except `/login` and the webhook.
+- `lib/company.ts`, `app/company-actions.ts`, `app/api/company`, `components/CompanyView.tsx`: the company master (goals, roadmaps, pivots) and its editor.
+- `scripts/company-sync.mjs`: copies the company master into each project's folder.
 - `lib/mock.ts` and `app/api/dev/simulate`: fake board for local development with no Notion token.
 
 ## Local development

@@ -40,3 +40,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 !.env.example
+
+# generated copy of the company master (this repo is public; the data lives in Neon)
+/company/
