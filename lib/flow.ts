@@ -46,6 +46,22 @@ export function expectAt(expectBy: string | null | undefined): number | null {
   const ms = Date.parse(DAY_ONLY.test(expectBy) ? `${expectBy}T09:00:00` : expectBy);
   return Number.isNaN(ms) ? null : ms;
 }
+// ---- Carried over: planned or started on an earlier day, and not finished ----------------
+/** Appended to a task's idle log line when the day ended while it was still handed off. */
+export const DAY_ENDED_MARK = "· day ended";
+/** Still handed off (idle) when its last day ended: the first thing to pick up next. */
+export function leftIdle(t: Pick<Task, "idleLog" | "idleSince">) {
+  if (t.idleSince) return false;
+  const lines = t.idleLog ? t.idleLog.split("\n").filter(Boolean) : [];
+  return !!lines.length && lines[lines.length - 1].trimEnd().endsWith(DAY_ENDED_MARK);
+}
+/** Planned on an earlier day and not finished, or started and left unfinished. */
+export const isCarried = (t: Task) =>
+  !t.focus && !t.delegatedAt && (!!t.missedOn || t.status === "Working on it" || leftIdle(t));
+/** Carried-over work in the order to pick it up: left idle first, then the most recently missed. */
+export const byCarried = (a: Task, b: Task) =>
+  Number(leftIdle(b)) - Number(leftIdle(a)) || (b.missedOn ?? "").localeCompare(a.missedOn ?? "");
+
 /** "Nov 15" for a day, "Nov 15, 3:00 PM" for an exact time. */
 export function fmtExpect(expectBy: string) {
   const at = expectAt(expectBy);
@@ -301,6 +317,19 @@ export function delegate(tasks: Task[], task: Task, today: string, expectBy?: st
 /** Switch delegated off. An idle task stays idle: it's waiting on AI again, not on a person. */
 export function undelegate(task: Task): Plan {
   return { changes: [{ id: task.id, patch: { delegatedAt: null, expectBy: null } }], creates: [] };
+}
+
+/** Take a delegated task back to do it yourself: it becomes Main and is no longer delegated. */
+export function takeBack(tasks: Task[], task: Task, today: string, now = new Date()): Plan {
+  const plan = resumeIdle(tasks, task, today, now);
+  const mine = { delegatedAt: null, expectBy: null };
+  const touched = plan.changes.some((c) => c.id === task.id);
+  return {
+    ...plan,
+    changes: touched
+      ? plan.changes.map((c) => (c.id === task.id ? { ...c, patch: { ...c.patch, ...mine } } : c))
+      : [...plan.changes, { id: task.id, patch: mine }],
+  };
 }
 
 /** Set, move or clear when the answer is expected. */

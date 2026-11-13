@@ -5,6 +5,7 @@ import { aiMode, currentModel, generateJSON } from "@/lib/ai";
 import { companyForPrompt } from "@/lib/company";
 import { historyForPrompt, saveRecommendation, savePlan, type RecItem } from "@/lib/history";
 import { DASHBOARD_SLOTS, LEVEL_LABELS, TODAY_TARGET } from "@/lib/config";
+import { expectAt, isCarried, leftIdle } from "@/lib/flow";
 import type { NewTask, Task } from "@/lib/types";
 
 // AI day planner. The client sends the conversation and its current draft order;
@@ -238,6 +239,9 @@ async function recommend() {
       t.due ? `due ${t.due}` : "",
       t.status ?? "",
       t.focus === "detour" ? "being worked on as noise (not planned)" : t.focus ? `already planned (${t.focus})` : "",
+      leftIdle(t) && !t.delegatedAt ? "LEFT IDLE: still handed off when the last day ended" : "",
+      t.missedOn && !t.focus ? `carried over: planned ${t.missedOn}, not finished` : "",
+      waiting(t) ? "delegated to someone, waiting on their answer" : t.delegatedAt ? "delegated: the answer is due, follow up" : "",
       hasKids.has(t.id) ? "has open sub-items" : "",
     ]
       .filter(Boolean)
@@ -264,6 +268,8 @@ Today is ${new Date().toDateString()}.
 Pick ${1 + DASHBOARD_SLOTS + TODAY_TARGET.min}-${MAX_PLAN} items, best first. Favour: P0, due soon or overdue, already in progress, unblocking others, momentum on one or two projects rather than scattering.
 Prefer actionable tasks (lowest level). Recommend a whole mission or project only when it should clearly move as one piece today.
 Skip Blocked items. Give each pick a short reason.
+Carry-over leads: items marked LEFT IDLE come first, in front of everything else, then other carried-over items the user already started or planned recently. Only something due today or overdue goes ahead of them. Say "left idle yesterday" or "carried over" in the reason.
+Don't pick items that are delegated and waiting on an answer: someone else is doing them. When the answer is due, pick it as a follow-up.
 
 Open items (alias | level | name | department | parent | priority | due | status | notes):
 ${tasks.map(line).join("\n")}${company}${historyBlock(history)}`,
@@ -273,6 +279,8 @@ ${tasks.map(line).join("\n")}${company}${historyBlock(history)}`,
     const picks: Pick[] = output.picks
       .map((p) => ({ id: alias.get(p.alias) ?? "", why: p.why.slice(0, 140) }))
       .filter((p) => p.id && !seen.has(p.id) && !!seen.add(p.id))
+      // Someone else is doing it and the answer isn't due: never a pick, whatever the model says.
+      .filter((p) => !waiting(byId.get(p.id)!))
       .slice(0, MAX_PLAN);
     await saveRecommendation({ source: "recommend", reply: output.reply, items: toItems(picks), model: currentModel(), usedAI: true });
     return Response.json({ reply: output.reply, picks });
@@ -300,16 +308,26 @@ async function logPlan(ids: string[]) {
   return Response.json({ ok: true });
 }
 
+/** Delegated and still waiting on the answer: not something to pick up today. */
+const waiting = (t: Task) => !!t.delegatedAt && !((expectAt(t.expectBy) ?? Infinity) <= Date.now());
+
 function heuristicPicks(tasks: Task[], hasKids: Set<string>): Pick[] {
   const today = new Date().toISOString().slice(0, 10);
   const soon = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+  const recent = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
   const score = (t: Task) =>
     (PRIORITY[t.priority ?? ""] ?? 3) * 10 +
+    // Carry-over leads: what was still handed off when the day ended, then what was missed lately.
+    (leftIdle(t) && !t.delegatedAt ? -40 : isCarried(t) && (t.missedOn ?? "") >= recent ? -12 : 0) +
     (t.due && t.due < today ? -15 : t.due && t.due <= soon ? -8 : 0) +
     (t.status === "Working on it" ? -6 : 0) +
     (t.focus ? -4 : 0);
   const why = (t: Task) =>
-    t.due && t.due < today
+    leftIdle(t) && !t.delegatedAt
+      ? "Left idle when the day ended: pick it up first"
+      : t.delegatedAt
+        ? "Delegated and the answer is due: follow up"
+        : t.due && t.due < today
       ? `Overdue since ${t.due}`
       : t.due === today
         ? "Due today"
@@ -323,7 +341,7 @@ function heuristicPicks(tasks: Task[], hasKids: Set<string>): Pick[] {
                 ? "Already on today's board"
                 : `${t.priority ?? "Open"} and ready to start`;
   return tasks
-    .filter((t) => !hasKids.has(t.id) && t.status !== "Blocked" && t.status !== "BLOCKING")
+    .filter((t) => !hasKids.has(t.id) && t.status !== "Blocked" && t.status !== "BLOCKING" && !waiting(t))
     .sort((a, b) => score(a) - score(b))
     .slice(0, 1 + DASHBOARD_SLOTS + TODAY_TARGET.max - 2)
     .map((t) => ({ id: t.id, why: why(t) }));

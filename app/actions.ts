@@ -235,6 +235,7 @@ export async function openDay() {
 /** End the day: save the stats and notes, and flush today's lanes. Unfinished work goes back to
  *  the to-do list marked with the day it was missed. `dropIds` (noise that was being worked on)
  *  leave their lane too, but were never planned, so they aren't marked as missed.
+ *  `idleLogs` closes the idle periods that were still open (minutes and log line only).
  *  `dayId` is null when the day has no row yet; `endedAt` is set when the midnight check ended
  *  the day (the moment the 15 minutes ran out, which can be well before this call). */
 export async function signOut(
@@ -244,6 +245,7 @@ export async function signOut(
   returnIds: string[],
   dropIds: string[] = [],
   endedAt?: string,
+  idleLogs: Change[] = [],
 ) {
   if ((dayId !== null && !ID.test(dayId)) || [...returnIds, ...dropIds].some((id) => !ID.test(id))) throw new Error("Bad id");
   const nums = ["planned", "done", "signalDone", "noiseDone", "plannedDone", "carriedOver", "idleMinutes"] as const;
@@ -251,6 +253,13 @@ export async function signOut(
   if (stats.doneIds.some((id) => !ID.test(id))) throw new Error("Bad done id");
   if (typeof notes !== "string" || notes.length > 2000) throw new Error("Bad notes");
   if (endedAt !== undefined && !isISO(endedAt)) throw new Error("Bad end time");
+  // Only tasks being flushed, and only their idle minutes and log.
+  const leaving = new Set([...returnIds, ...dropIds]);
+  const logOf = new Map(
+    idleLogs
+      .filter((c) => leaving.has(c.id))
+      .map((c) => [c.id, cleanPatch({ idleMinutes: c.patch.idleMinutes, idleLog: c.patch.idleLog })] as const),
+  );
 
   const today = todayInZone();
   const history = await getHistory(DAY_LOOKBACK).catch(() => []);
@@ -260,8 +269,8 @@ export async function signOut(
     const missedOn = row?.date ?? today;
     const { errors } = await writeChanges(
       [
-        ...returnIds.map((id) => ({ id, patch: { ...FLUSH, missedOn } })),
-        ...dropIds.map((id) => ({ id, patch: FLUSH })),
+        ...returnIds.map((id) => ({ id, patch: { ...FLUSH, ...logOf.get(id), missedOn } })),
+        ...dropIds.map((id) => ({ id, patch: { ...FLUSH, ...logOf.get(id) } })),
       ],
       [],
     );

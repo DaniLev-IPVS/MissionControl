@@ -16,7 +16,7 @@ export function SignOutDialog({ onClose }: { onClose: () => void }) {
   const date = day?.date ?? today;
   // Every lane is emptied: Main, Task switch, Today, the idle work in them, and noise being
   // worked on. Planned work goes back to the to-do list; that noise goes back to Noise.
-  const { carried, stats, changes, returnIds, dropIds } = useMemo(() => endOfDay(board, tasks), [board, tasks]);
+  const { carried, stats, changes, returnIds, dropIds, idleLogs } = useMemo(() => endOfDay(board, tasks), [board, tasks]);
   const [notes, setNotes] = useState(day?.notes ?? "");
   const [saving, setSaving] = useState(false);
   const voice = useDictation(setNotes);
@@ -29,7 +29,7 @@ export function SignOutDialog({ onClose }: { onClose: () => void }) {
   async function confirm() {
     setSaving(true);
     voice.stop();
-    const ok = await apply({ changes, creates: [] }, () => signOut(day?.id ?? null, stats, notes, returnIds, dropIds));
+    const ok = await apply({ changes, creates: [] }, () => signOut(day?.id ?? null, stats, notes, returnIds, dropIds, undefined, idleLogs));
     setSaving(false);
     if (ok) onClose();
   }

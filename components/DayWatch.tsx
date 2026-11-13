@@ -82,7 +82,7 @@ export function DayWatch({
     const notes = [board.day?.notes, `Ended automatically at ${time}: no "still working" after midnight.`].filter(Boolean).join("\n").slice(0, 2000);
     busy.current = true;
     apply({ changes: end.changes, creates: [] }, () =>
-      signOut(board.day?.id ?? null, end.stats, notes, end.returnIds, end.dropIds, new Date(at).toISOString()),
+      signOut(board.day?.id ?? null, end.stats, notes, end.returnIds, end.dropIds, new Date(at).toISOString(), end.idleLogs),
     )
       .then((ok) => {
         if (ok) setEnded({ at, carried: end.carried.length });

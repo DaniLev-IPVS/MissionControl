@@ -7,6 +7,7 @@ import {
   LogOut,
   ListTodo,
   Flame,
+  History,
   Mic,
   Plus,
   Radio,
@@ -19,7 +20,7 @@ import {
 } from "lucide-react";
 import { LEVELS, LEVEL_LABELS, TODAY_TARGET, isDoneStatus, type Level } from "@/lib/config";
 import { dayIsOn } from "@/lib/days";
-import { isIdle, localDay, lowestLevel, makeMain, moveTo, sections, type Lane } from "@/lib/flow";
+import { byCarried, isCarried, isDelegated, isIdle, localDay, lowestLevel, makeMain, moveTo, sections, type Lane } from "@/lib/flow";
 import { useNow, useReminders } from "@/lib/hooks";
 import type { Task } from "@/lib/types";
 import { useBoard } from "@/lib/useBoard";
@@ -205,13 +206,23 @@ export default function MissionControl() {
   // Idle work (handed to AI) lives on the Idle board, not in its lane.
   const active = (t: Task) => !isIdle(t);
   const byIdleStart = (a: Task, b: Task) => (a.idleSince ?? "").localeCompare(b.idleSince ?? "");
-  const idleSignal = s.dashboard.concat(s.today).filter(isIdle).filter(visible).sort(byIdleStart);
-  const idleNoise = s.detour.filter(isIdle).filter(visible).sort(byIdleStart);
+  // Delegated work has its own place there: it waits on a person, and it outlives the day.
+  const waitingOnAI = (t: Task) => isIdle(t) && !isDelegated(t);
+  const idleSignal = s.dashboard.concat(s.today).filter(waitingOnAI).filter(visible).sort(byIdleStart);
+  const idleNoise = s.detour.filter(waitingOnAI).filter(visible).sort(byIdleStart);
+  const delegated = tasks.filter(isDelegated).filter(visible).sort((a, b) => a.delegatedAt!.localeCompare(b.delegatedAt!));
   const dashboard = sorted(s.dashboard.filter(active));
   const todayList = sorted(s.today.filter(active));
   const noise = sorted(s.noise, noiseFallback);
   const detour = sorted(s.detour.filter(active));
-  const backlog = sorted(s.backlog, backlogFallback);
+  // The to-do list opens with what was planned or started on an earlier day and not finished.
+  // (A project or mission that is merely "in progress" isn't carried over: its open tasks are.)
+  const carried = s.backlog
+    .filter((t) => isCarried(t) && (!!t.missedOn || lowestIds.has(t.id)))
+    .filter(visible)
+    .sort(byCarried);
+  const carriedIds = new Set(carried.map((t) => t.id));
+  const backlog = sorted(s.backlog.filter((t) => !carriedIds.has(t.id)), backlogFallback);
 
   return (
     <MCContext.Provider value={ctx}>
@@ -467,7 +478,7 @@ export default function MissionControl() {
               if (t) apply(makeMain(tasks, t, today));
             }} />
 
-            <IdleBoard signal={idleSignal} noise={idleNoise} showSignal={showSignal} showNoise={showNoise} />
+            <IdleBoard signal={idleSignal} noise={idleNoise} delegated={delegated} showSignal={showSignal} showNoise={showNoise} />
 
             {showSignal && (
               <LaneSection
@@ -521,7 +532,7 @@ export default function MissionControl() {
             {showBacklog && (
               <LaneSection
                 lane="backlog"
-                itemCount={backlog.length}
+                itemCount={backlog.length + carried.length}
                 icon={<ListTodo className="size-4" />}
                 title="To-do list"
                 subtitle="Everything else, waiting to be planned"
@@ -531,6 +542,23 @@ export default function MissionControl() {
                 dragging={!!dragId}
                 empty="All clear."
               >
+                {carried.length > 0 && (
+                  <section aria-label="Carried over" className="mb-4 rounded-2xl bg-warning/[0.05] p-3 ring-1 ring-warning/25">
+                    <h3 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-warning">
+                      <History className="size-3.5" aria-hidden />
+                      Carried over
+                      <span className="font-mono font-normal text-ink-3">{carried.length}</span>
+                    </h3>
+                    <p className="mb-2.5 mt-0.5 text-xs text-ink-3">
+                      Planned or started on an earlier day and not finished. Left idle comes first.
+                    </p>
+                    <div className="scroll-thin grid max-h-[46vh] gap-2.5 overflow-y-auto pr-1 md:grid-cols-2">
+                      {carried.map((t, i) => (
+                        <TaskCard key={t.id} task={t} index={i} onDragStart={setDragId} dense />
+                      ))}
+                    </div>
+                  </section>
+                )}
                 <Backlog tasks={backlog} grouped={sort === "flow" && !depts.size} onDragStart={setDragId} />
               </LaneSection>
             )}

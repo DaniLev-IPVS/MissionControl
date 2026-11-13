@@ -153,14 +153,17 @@ function toState(p: PageObjectResponse): State {
   return Object.fromEntries(STATE_KEYS.map((k) => [k, t[k]])) as State;
 }
 
-/** State rows that can matter now: in a lane, flagged noise, or touched in the last 3 days. */
-async function fetchStates(): Promise<Map<string, State>> {
+/** State rows that can matter now: in a lane, flagged noise, or touched in the last 3 days.
+ *  `finished` adds every row with a Done At, for the tree: without it a finished task's own done
+ *  date is forgotten after 3 days and it falls back to the day the page was last edited. */
+async function fetchStates(finished = false): Promise<Map<string, State>> {
   const since = new Date(Date.now() - 3 * 86400000).toISOString();
   const pages = await queryAll(TASK_STATE_DATA_SOURCE_ID, {
     or: [
       { property: "Focus", select: { is_not_empty: true } },
       { property: "Noise", checkbox: { equals: true } },
       { timestamp: "last_edited_time", last_edited_time: { on_or_after: since } },
+      ...(finished ? [{ property: "Done At", date: { is_not_empty: true } }] : []),
     ],
   });
   const map = new Map<string, State>();
@@ -185,12 +188,12 @@ function accessWarning(name: string, err: unknown) {
     : `${name} couldn't load: ${err instanceof Error ? err.message : String(err)}`;
 }
 
-async function sharedTasks(filter: object) {
+async function sharedTasks(filter: object, finishedStates = false) {
   const warnings: string[] = [];
   const [pages, oldNames, states] = await Promise.all([
     queryAll(INFLUITY_TASKS_DATA_SOURCE_ID, filter).catch((e) => (warnings.push(accessWarning("Influity Task Board", e)), [])),
     levelsUseOldNames(INFLUITY_TASKS_DATA_SOURCE_ID).catch(() => true),
-    fetchStates().catch((e) => (warnings.push(accessWarning("Mission Control Task State", e)), new Map<string, State>())),
+    fetchStates(finishedStates).catch((e) => (warnings.push(accessWarning("Mission Control Task State", e)), new Map<string, State>())),
   ]);
   return { tasks: pages.map((p) => withState(toTask(p, oldNames, "influity"), states)), warnings };
 }
@@ -223,7 +226,11 @@ export async function fetchDoneSince(sinceISO: string): Promise<DoneItem[]> {
     queryAll(TASKS_DATA_SOURCE_ID, { and: [{ property: "Status", status: { equals: "Done" } }, edited] }, 50, 50),
     sharedTasks({ and: [mine(), { property: "Status", status: { equals: "Completed" } }, edited] }),
   ]);
-  return [...pages.map((p) => toDoneItem(toTask(p, false))), ...shared.tasks.map(toDoneItem)];
+  // Found by edit time (Notion can't filter on a shared task's own done date), then narrowed:
+  // a task with a Done At from an earlier day was only touched today, not finished today.
+  const finishedSince = (t: Task) =>
+    !t.doneAt || (t.doneAt.length <= 10 ? t.doneAt >= sinceISO.slice(0, 10) : Date.parse(t.doneAt) >= Date.parse(sinceISO));
+  return [...pages.map((p) => toTask(p, false)), ...shared.tasks].filter(finishedSince).map(toDoneItem);
 }
 
 /** Every ticket, finished ones included, for progress and the timeline. */
@@ -231,7 +238,7 @@ export async function fetchAllTasks(): Promise<TreeTask[]> {
   const [pages, oldNames, shared] = await Promise.all([
     queryAll(TASKS_DATA_SOURCE_ID),
     levelsUseOldNames(),
-    sharedTasks(mine()),
+    sharedTasks(mine(), true),
   ]);
   return [...pages.map((p) => toTask(p, oldNames)), ...shared.tasks].map((t) => {
     const finished = t.status === "Done" || t.status === "Cancelled";

@@ -11,6 +11,7 @@ import {
   isBlocked,
   isPopupSignal,
   laneOf,
+  leftIdle,
   makeMain,
   markBlocked,
   moveTo,
@@ -80,6 +81,14 @@ export function TaskMeta({ task }: { task: Task }) {
           className="inline-flex items-center gap-1 rounded-md bg-delegated/15 px-1.5 py-0.5 text-[11px] font-semibold text-delegated"
         >
           <Users className="size-3" aria-hidden /> Delegated
+        </span>
+      )}
+      {leftIdle(task) && !task.delegatedAt && (
+        <span
+          title="Still handed off when the day ended. Pick it up first."
+          className="inline-flex items-center gap-1 rounded-md bg-primary/18 px-1.5 py-0.5 text-[11px] font-semibold text-primary-hi"
+        >
+          <Bot className="size-3" aria-hidden /> Left idle
         </span>
       )}
       {task.missedOn && (

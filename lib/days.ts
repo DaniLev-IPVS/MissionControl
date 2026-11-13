@@ -1,6 +1,6 @@
 // The workday: when it is running, what ending it does, its statistics, and the midnight check.
 // Shared by the browser and the server actions.
-import { addDays, isSignal } from "./flow";
+import { DAY_ENDED_MARK, addDays, closeIdle, isSignal } from "./flow";
 import type { Board, Change, Day, DayStats, Task } from "./types";
 
 // ---- Is a day running? ----------------------------------------------------------------
@@ -21,24 +21,36 @@ export function workingDay(days: Day[], today: string): Day | null {
 export const dayIsOn = (tasks: Task[]) => tasks.some((t) => !!t.focus);
 
 /** What ending the day does: every lane is emptied. Planned work goes back to the to-do list
- *  marked as missed; noise that was being worked on just goes back to Noise. */
-export function endOfDay(board: Board, tasks: Task[]) {
+ *  marked as missed; noise that was being worked on just goes back to Noise. Work that was still
+ *  handed off (idle) has its idle time logged and is flagged, so it is the first thing picked up
+ *  next: that includes idle noise, which carries over like planned work. Delegated stays delegated. */
+export function endOfDay(board: Board, tasks: Task[], now = new Date()) {
   const day = board.day;
   const planned = new Set(day?.plannedIds ?? []);
   const real = tasks.filter((t) => !t.id.startsWith("tmp-"));
-  const carried = real.filter((t) => isSignal(t) || planned.has(t.id));
-  const dropped = real.filter((t) => t.focus === "detour" && !planned.has(t.id));
+  const stillIdle = (t: Task) => !!t.idleSince && !!t.focus;
+  const carried = real.filter((t) => isSignal(t) || planned.has(t.id) || (t.focus === "detour" && stillIdle(t)));
+  const carriedIds = new Set(carried.map((t) => t.id));
+  const dropped = real.filter((t) => t.focus === "detour" && !carriedIds.has(t.id));
   const returnIds = carried.map((t) => t.id);
   const dropIds = dropped.map((t) => t.id);
   const flush = { focus: null, focusOrder: null, idleSince: null, idleReminder: null };
+  // Close the open idle periods: minutes counted, and the log line says the day ended on it.
+  const idleLogs: Change[] = real.filter(stillIdle).map((t) => {
+    const closed = closeIdle(t, now);
+    // Delegated work isn't yours to pick up tomorrow: it keeps waiting in Delegated, unmarked.
+    const idleLog = t.delegatedAt ? closed.idleLog : `${closed.idleLog} ${DAY_ENDED_MARK}`;
+    return { id: t.id, patch: { idleMinutes: closed.idleMinutes, idleLog } };
+  });
+  const logOf = new Map(idleLogs.map((c) => [c.id, c.patch]));
   const changes: Change[] = [
-    ...returnIds.map((id) => ({ id, patch: day ? { ...flush, missedOn: day.date } : flush })),
+    ...returnIds.map((id) => ({ id, patch: { ...flush, ...logOf.get(id), ...(day ? { missedOn: day.date } : {}) } })),
     ...dropIds.map((id) => ({ id, patch: flush })),
   ];
   // Idle time is read by date: use the day's own, so a day that ran past midnight keeps its numbers.
   const when = day ? new Date(`${day.date}T12:00:00`) : new Date();
   const stats: DayStats = { ...computeDayStats(board, tasks, when), carriedOver: carried.length };
-  return { carried, dropped, returnIds, dropIds, changes, stats };
+  return { carried, dropped, returnIds, dropIds, idleLogs, changes, stats };
 }
 
 // ---- Midnight: a day that wasn't ended ----------------------------------------------------
